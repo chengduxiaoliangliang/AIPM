@@ -33,6 +33,10 @@
       </div>
 
       <div class="header-actions">
+        <el-button-group class="view-toggle">
+          <el-button :type="viewMode === 'reader' ? 'primary' : ''" @click="setView('reader')">阅读</el-button>
+          <el-button :type="viewMode === 'graph' ? 'primary' : ''" @click="setView('graph')">图谱</el-button>
+        </el-button-group>
         <el-button :icon="Plus" @click="openCreatePage">新建页面</el-button>
         <el-button type="primary" :icon="Upload" @click="uploadVisible = true">上传资料</el-button>
         <el-button :icon="DataAnalysis" :loading="linting" @click="runLint(false)">体检</el-button>
@@ -94,9 +98,17 @@
         </el-scrollbar>
       </aside>
 
-      <!-- Center: reader -->
+      <!-- Center: reader / graph -->
       <main class="kb-main vben-card" v-loading="pageLoading">
-        <template v-if="activePage">
+        <div v-if="viewMode === 'graph'" class="graph-wrap">
+          <div v-show="graphHasData" ref="graphRef" class="kb-graph"></div>
+          <el-empty v-if="!graphHasData" description="还没有页面，无法生成图谱" :image-size="90" />
+          <div class="graph-tip" v-if="graphHasData">
+            节点大小 = 被引用次数 · 点击节点查看页面 · 支持拖拽与缩放
+          </div>
+        </div>
+
+        <template v-else-if="activePage">
           <div class="page-toolbar">
             <div class="pt-left">
               <el-tag size="small" effect="plain" :type="tagType(activePage.page_type)">
@@ -304,8 +316,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
+import * as echarts from 'echarts'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Upload, Download, Refresh, Edit, Delete, DataAnalysis, MagicStick,
@@ -315,7 +328,7 @@ import {
   listKBProjectsApi, getKBStructureApi, listKBSourcesApi, getKBPageApi,
   createKBPageApi, updateKBPageApi, deleteKBPageApi, uploadKBSourcesApi,
   deleteKBSourceApi, ingestKBSourceApi, listKBJobsApi, runKBLintApi,
-  getLatestKBLintApi, downloadKBSourceApi, exportKBWikiApi
+  getLatestKBLintApi, downloadKBSourceApi, exportKBWikiApi, getKBGraphApi
 } from '@/api/kb'
 import type {
   KBProjectSummary, KBStructure, KBSource, KBPageBrief, KBPageDetail,
@@ -342,6 +355,12 @@ const editorVisible = ref(false)
 const lintVisible = ref(false)
 const uploadFileList = ref<any[]>([])
 const openGroups = ref<string[]>(['overview', 'topic'])
+
+// Graph view
+const viewMode = ref<'reader' | 'graph'>('reader')
+const graphRef = ref<HTMLElement>()
+const graphHasData = ref(false)
+let graphChart: echarts.ECharts | null = null
 
 const editingId = ref<number | null>(null)
 const pageForm = reactive({ title: '', page_type: 'topic', summary: '', content: '' })
@@ -424,6 +443,91 @@ function statLabel(k: string) {
   } as any)[k] || k
 }
 
+// ─── knowledge graph ─────────────────────────────────────────────────────────
+const GRAPH_COLORS: Record<string, string> = {
+  overview: '#36b37e', topic: '#409eff', entity: '#e6a23c',
+  comparison: '#909399', decision: '#f56c6c', source: '#b39ddb',
+  index: '#cfd3d8', log: '#cfd3d8'
+}
+
+async function setView(v: 'reader' | 'graph') {
+  viewMode.value = v
+  if (v === 'graph') {
+    await nextTick()
+    await renderGraph()
+  }
+}
+
+async function renderGraph() {
+  if (!currentProjectId.value) return
+  const res = await getKBGraphApi(currentProjectId.value)
+  const nodes: any[] = res.data?.nodes || []
+  const edges: any[] = res.data?.edges || []
+  graphHasData.value = nodes.length > 0
+  await nextTick()
+
+  if (!graphHasData.value || !graphRef.value) {
+    graphChart?.dispose()
+    graphChart = null
+    return
+  }
+
+  if (!graphChart) graphChart = echarts.init(graphRef.value)
+
+  const cats = Array.from(new Set(nodes.map((n) => n.type)))
+  const catIndex = new Map(cats.map((c, i) => [c, i]))
+
+  graphChart.setOption({
+    tooltip: {
+      formatter: (p: any) => (p.dataType === 'node'
+        ? `<b>${p.data.name}</b><br/>类型：${typeLabel(p.data.rawType)}<br/>被引用：${p.data.value} 次`
+        : '')
+    },
+    legend: [{
+      data: cats.map((c) => typeLabel(c)),
+      bottom: 8, icon: 'circle', itemWidth: 8, itemHeight: 8,
+      textStyle: { fontSize: 11 }
+    }],
+    series: [{
+      type: 'graph',
+      layout: 'force',
+      roam: true,
+      draggable: true,
+      force: { repulsion: 280, edgeLength: [90, 180], gravity: 0.08, friction: 0.2 },
+      label: { show: true, position: 'right', fontSize: 11, color: '#4a5568', formatter: '{b}' },
+      lineStyle: { color: 'source', curveness: 0.12, opacity: 0.45, width: 1 },
+      emphasis: { focus: 'adjacency', lineStyle: { width: 2, opacity: 0.9 } },
+      categories: cats.map((c) => ({
+        name: typeLabel(c),
+        itemStyle: { color: GRAPH_COLORS[c] || '#909399' }
+      })),
+      data: nodes.map((n) => ({
+        id: String(n.id),
+        name: n.title,
+        rawType: n.type,
+        value: n.inbound || 0,
+        category: catIndex.get(n.type),
+        symbolSize: n.reserved ? 10 : Math.min(40, 13 + (n.inbound || 0) * 2.5)
+      })),
+      edges: edges.map((e) => ({ source: String(e.source), target: String(e.target) }))
+    }]
+  }, true)
+
+  graphChart.off('click')
+  graphChart.on('click', (p: any) => {
+    if (p.dataType !== 'node') return
+    const id = Number(p.data.id)
+    if (id) {
+      viewMode.value = 'reader'
+      openPageById(id)
+    }
+  })
+}
+
+function onResize() {
+  graphChart?.resize()
+}
+
 // ─── data loading ────────────────────────────────────────────────────────────
 async function loadProjects() {
   const res = await listKBProjectsApi()
@@ -464,7 +568,13 @@ async function reloadStructure() {
 async function onProjectChange() {
   activePage.value = null
   lint.value = null
+  graphChart?.dispose()
+  graphChart = null
   await Promise.all([loadStructure(), loadSources(), loadLint(), loadJobs()])
+  if (viewMode.value === 'graph') {
+    await renderGraph()
+    return
+  }
   const first = nonEmptyGroups.value[0]?.pages[0]
   if (first) openPageById(first.id)
 }
@@ -588,6 +698,7 @@ async function tick() {
     if (runningJobs.value.length === 0) {
       stopPolling()
       await reloadStructure()
+      if (viewMode.value === 'graph') await renderGraph()
       const shouldLint = autoLintAfter
       autoLintAfter = false
       if (shouldLint) await runLint(true)
@@ -693,6 +804,7 @@ function saveBlob(blob: Blob, filename: string) {
 }
 
 onMounted(async () => {
+  window.addEventListener('resize', onResize)
   await loadProjects()
   if (currentProjectId.value) {
     await Promise.all([loadStructure(), loadSources(), loadLint(), loadJobs()])
@@ -702,7 +814,12 @@ onMounted(async () => {
   }
 })
 
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  stopPolling()
+  window.removeEventListener('resize', onResize)
+  graphChart?.dispose()
+  graphChart = null
+})
 </script>
 
 <style scoped lang="scss">
@@ -760,6 +877,26 @@ onBeforeUnmount(stopPolling)
 .kb-side, .kb-main, .kb-right {
   display: flex; flex-direction: column;
   min-height: 0; overflow: hidden;
+}
+
+.view-toggle { margin-right: 4px; }
+
+/* Knowledge graph */
+.graph-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.kb-graph { width: 100%; height: 100%; }
+.graph-tip {
+  position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+  font-size: 11.5px; color: var(--text-muted);
+  background: rgba(255, 255, 255, .86);
+  padding: 3px 12px; border-radius: 999px;
+  pointer-events: none; white-space: nowrap;
 }
 
 .side-head {

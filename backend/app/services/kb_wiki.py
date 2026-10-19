@@ -150,6 +150,74 @@ def extract_wiki_links(content: str) -> List[str]:
     return out
 
 
+CHUNK_SIZE = 12000
+MAX_CHUNKS = 8
+
+
+def _split_by_paragraph(text: str, size: int) -> List[str]:
+    """Fallback splitter for a single section that is itself too long."""
+    out: List[str] = []
+    buf = ""
+    for para in text.split("\n\n"):
+        if len(buf) + len(para) + 2 <= size:
+            buf = f"{buf}\n\n{para}" if buf else para
+            continue
+        if buf:
+            out.append(buf)
+            buf = ""
+        if len(para) > size:
+            # A single enormous paragraph (e.g. a table dump): hard-slice it.
+            for i in range(0, len(para), size):
+                out.append(para[i:i + size])
+        else:
+            buf = para
+    if buf:
+        out.append(buf)
+    return [c for c in out if c.strip()]
+
+
+def split_into_chunks(
+    text: str,
+    chunk_size: int = CHUNK_SIZE,
+    max_chunks: int = MAX_CHUNKS,
+) -> tuple[List[str], bool]:
+    """Split a long document into LLM-sized chunks on heading boundaries.
+
+    Short documents stay as a single chunk, so the common path is unchanged.
+    Sections are packed greedily up to `chunk_size`.
+
+    Returns (chunks, truncated) — `truncated` is True when the document needed
+    more than `max_chunks` pieces, so the caller can tell the user that the tail
+    was skipped instead of silently losing it.
+    """
+    text = (text or "").strip()
+    if not text:
+        return [], False
+    if len(text) <= chunk_size:
+        return [text], False
+
+    sections = [s for s in re.split(r"\n(?=#{1,4}\s)", text) if s.strip()]
+
+    chunks: List[str] = []
+    buf = ""
+    for sec in sections:
+        if len(buf) + len(sec) + 1 <= chunk_size:
+            buf = f"{buf}\n{sec}" if buf else sec
+            continue
+        if buf:
+            chunks.append(buf)
+            buf = ""
+        if len(sec) > chunk_size:
+            chunks.extend(_split_by_paragraph(sec, chunk_size))
+        else:
+            buf = sec
+    if buf:
+        chunks.append(buf)
+
+    truncated = len(chunks) > max_chunks
+    return chunks[:max_chunks], truncated
+
+
 def _parse_json_object(text: str) -> Optional[dict]:
     if not text:
         return None
@@ -436,84 +504,109 @@ async def ingest_source(
         if not text:
             raise ValueError("源文件没有可用文本，无法摄入")
 
-        # ── analyse ──────────────────────────────────────────────────────
-        job = db.get(KBIngestJob, job_id)
-        job.stage, job.progress = "analysing", 30
-        db.commit()
-
-        existing = (
-            db.query(KBPage)
-            .filter(KBPage.project_id == project.id, KBPage.slug.notin_(RESERVED_SLUGS))
-            .order_by(KBPage.updated_at.desc())
-            .limit(60)
-            .all()
-        )
-        catalog = "\n".join(
-            f"- {p.title} [{p.page_type}]：{(p.summary or '')[:80]}" for p in existing
-        ) or "（当前知识库为空）"
-
-        plan = await _llm_json(
-            WIKI_SCHEMA,
-            INGEST_PROMPT.format(
-                project=project.name,
-                catalog=catalog,
-                filename=source.original_name,
-                body=text[:12000],
-            ),
-        )
-        used_llm = plan is not None
-        if not used_llm:
-            plan = _fallback_plan(source, text)
-
-        # ── write ────────────────────────────────────────────────────────
-        job = db.get(KBIngestJob, job_id)
-        job.stage, job.progress = "writing", 70
-        db.commit()
+        # ── analyse + write, chunk by chunk ──────────────────────────────
+        chunks, truncated = split_into_chunks(text)
+        total = len(chunks)
 
         created = updated = 0
-        specs = plan.get("pages") or []
-        for spec in specs[:6]:
-            title = (spec.get("title") or "").strip()
-            if not title:
-                continue
-            slug = slugify(title)
-            if slug in RESERVED_SLUGS:
-                continue
-            ptype = spec.get("type") if spec.get("type") in PAGE_TYPES else "topic"
-            tags = spec.get("tags") or []
-            page, was_created = _upsert_page(
-                db, project.id, slug,
-                title=title[:255],
-                page_type=ptype,
-                summary=(spec.get("summary") or "")[:1000],
-                content=spec.get("content") or "",
-                tags=",".join(tags)[:255] if isinstance(tags, list) else str(tags)[:255],
-                source_ids=json.dumps([source_id], ensure_ascii=False),
-                generated_by="llm" if used_llm else "system",
-                status="published",
-                created_by=user_id,
-            )
-            if was_created:
-                created += 1
-            else:
-                updated += 1
-                # merge source references
-                try:
-                    ids = set(json.loads(page.source_ids or "[]"))
-                except Exception:
-                    ids = set()
-                ids.add(source_id)
-                page.source_ids = json.dumps(sorted(ids), ensure_ascii=False)
-        db.flush()
+        used_llm = False
+        summaries: List[str] = []
+        log_bits: List[str] = []
 
-        link_count = rebuild_links(db, project.id)
-        rebuild_index(db, project.id)
-        append_log(
-            db, project.id,
-            f"ingest | {source.original_name}",
-            (plan.get("log_entry") or plan.get("source_summary") or "").strip()
-            + f"\n\n新增 {created} 页 / 更新 {updated} 页 / 解析 {link_count} 条双链",
-        )
+        for idx, chunk in enumerate(chunks, start=1):
+            job = db.get(KBIngestJob, job_id)
+            job.stage = "analysing" if total == 1 else f"analysing ({idx}/{total})"
+            job.progress = 20 + int(45 * (idx - 1) / total)
+            db.commit()
+
+            # Re-read the catalog every round so later chunks update the pages
+            # created by earlier ones instead of duplicating them.
+            existing = (
+                db.query(KBPage)
+                .filter(KBPage.project_id == project_id, KBPage.slug.notin_(RESERVED_SLUGS))
+                .order_by(KBPage.updated_at.desc())
+                .limit(60)
+                .all()
+            )
+            catalog = "\n".join(
+                f"- {p.title} [{p.page_type}]：{(p.summary or '')[:80]}" for p in existing
+            ) or "（当前知识库为空）"
+
+            plan = await _llm_json(
+                WIKI_SCHEMA,
+                INGEST_PROMPT.format(
+                    project=project.name,
+                    catalog=catalog,
+                    filename=source.original_name,
+                    body=chunk,
+                ),
+            )
+            if plan is not None:
+                used_llm = True
+            elif idx == 1:
+                # Only the first chunk falls back to plain filing — retrying the
+                # fallback for every chunk would flood the wiki with stub pages.
+                plan = _fallback_plan(source, chunk)
+            else:
+                plan = None
+
+            if not plan:
+                continue
+
+            summaries.append((plan.get("source_summary") or "").strip())
+            if plan.get("log_entry"):
+                log_bits.append(str(plan["log_entry"]).strip())
+
+            job = db.get(KBIngestJob, job_id)
+            job.stage = "writing" if total == 1 else f"writing ({idx}/{total})"
+            job.progress = 20 + int(60 * idx / total)
+            db.commit()
+
+            for spec in (plan.get("pages") or [])[:6]:
+                title = (spec.get("title") or "").strip()
+                if not title:
+                    continue
+                slug = slugify(title)
+                if slug in RESERVED_SLUGS:
+                    continue
+                ptype = spec.get("type") if spec.get("type") in PAGE_TYPES else "topic"
+                tags = spec.get("tags") or []
+                page, was_created = _upsert_page(
+                    db, project_id, slug,
+                    title=title[:255],
+                    page_type=ptype,
+                    summary=(spec.get("summary") or "")[:1000],
+                    content=spec.get("content") or "",
+                    tags=",".join(tags)[:255] if isinstance(tags, list) else str(tags)[:255],
+                    source_ids=json.dumps([source_id], ensure_ascii=False),
+                    generated_by="llm" if used_llm else "system",
+                    status="published",
+                    created_by=user_id,
+                )
+                if was_created:
+                    created += 1
+                else:
+                    updated += 1
+                    try:
+                        ids = set(json.loads(page.source_ids or "[]"))
+                    except Exception:
+                        ids = set()
+                    ids.add(source_id)
+                    page.source_ids = json.dumps(sorted(ids), ensure_ascii=False)
+            db.flush()
+
+        link_count = rebuild_links(db, project_id)
+        rebuild_index(db, project_id)
+
+        summary_text = " ".join(s for s in summaries if s)[:800]
+        detail = f"{summary_text}\n\n" if summary_text else ""
+        detail += f"新增 {created} 页 / 更新 {updated} 页 / 解析 {link_count} 条双链"
+        if total > 1:
+            detail += f"\n文档较长（{len(text)} 字符），已分 {total} 段摄入"
+        if truncated:
+            detail += f"\n⚠️ 超出单次处理上限（{MAX_CHUNKS} 段），尾部内容未摄入"
+
+        append_log(db, project_id, f"ingest | {source.original_name}", detail)
 
         source = db.get(KBSource, source_id)
         source.status = "indexed"
@@ -523,7 +616,7 @@ async def ingest_source(
         job.status, job.stage, job.progress = "succeeded", "done", 100
         job.pages_created, job.pages_updated = created, updated
         job.used_llm = "true" if used_llm else "false"
-        job.message = plan.get("source_summary") or ""
+        job.message = (summary_text or (log_bits[0] if log_bits else ""))[:2000]
         job.finished_at = datetime.utcnow()
         db.commit()
 
@@ -534,7 +627,8 @@ async def ingest_source(
             "pages_updated": updated,
             "links": link_count,
             "used_llm": used_llm,
-            "summary": plan.get("source_summary") or "",
+            "chunks": total,
+            "summary": summary_text,
         }
 
     except Exception as exc:
