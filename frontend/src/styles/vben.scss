@@ -1,0 +1,108 @@
+:root {
+  /* Flat Design Core Color Palette */
+  --primary-color: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-light: rgba(79, 70, 229, 0.12);
+  --primary-glow: rgba(79, 70, 229, 0.25);
+  
+  --success-color: #10b981;
+  --success-light: rgba(16, 185, 129, 0.12);
+  --warning-color: #f59e0b;
+  --warning-light: rgba(245, 158, 11, 0.12);
+  --danger-color: #ef4444;
+  --danger-light: rgba(239, 68, 68, 0.12);
+  --info-color: #06b6d4;
+  --info-light: rgba(6, 182, 212, 0.12);
+  --purple-color: #8b5cf6;
+
+  /* Glassmorphism Surface Tokens (Light Mode) */
+  --bg-color: #f8fafc;
+  --bg-mesh: radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
+             radial-gradient(at 100% 0%, rgba(168, 85, 247, 0.07) 0px, transparent 50%),
+             radial-gradient(at 50% 100%, rgba(6, 182, 212, 0.06) 0px, transparent 50%),
+             #f8fafc;
+             
+  --bg-card: rgba(255, 255, 255, 0.78);
+  --bg-card-hover: rgba(255, 255, 255, 0.92);
+  --bg-header: rgba(255, 255, 255, 0.82);
+  --bg-sidebar: rgba(15, 23, 42, 0.95);
+  --bg-hover: rgba(241, 245, 249, 0.8);
+  
+  --glass-blur: 16px;
+  --glass-saturate: 180%;
+  --border-color: rgba(226, 232, 240, 0.8);
+  --border-glass: rgba(255, 255, 255, 0.65);
+  --border-glass-subtle: rgba(255, 255, 255, 0.35);
+
+  --text-main: #0f172a;
+  --text-regular: #334155;
+  --text-muted: #64748b;
+
+  /* Elevation and Glass Shadows */
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+  --shadow-glass: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
+  --shadow-glass-hover: 0 12px 36px 0 rgba(79, 70, 229, 0.12);
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  --header-height: 54px;
+  --tabs-height: 40px;
+  --sidebar-width: 230px;
+  --sidebar-collapsed-width: 68px;
+}
+
+/* Glassmorphism Core Card Class */
+.vben-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-glass);
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+
+  &:hover {
+    box-shadow: var(--shadow-glass-hover);
+    border-color: rgba(79, 70, 229, 0.3);
+  }
+}
+
+/* Flat Glass Gradients */
+.stat-card-gradient-1 {
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(99, 102, 241, 0.04) 100%);
+}
+
+.stat-card-gradient-2 {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(52, 211, 153, 0.04) 100%);
+}
+
+.stat-card-gradient-3 {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(251, 191, 36, 0.04) 100%);
+}
+
+.stat-card-gradient-4 {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(248, 113, 113, 0.04) 100%);
+}
+
+/* Smooth Page Transitions */
+.fade-transform-enter-active,
+.fade-transform-leave-active {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fade-transform-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.fade-transform-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}

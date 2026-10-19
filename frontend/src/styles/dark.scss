@@ -1,0 +1,87 @@
+html.dark {
+  /* Dark Mode Mesh Background */
+  --bg-color: #0b0f19;
+  --bg-mesh: radial-gradient(at 0% 0%, rgba(79, 70, 229, 0.2) 0px, transparent 50%),
+             radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.16) 0px, transparent 50%),
+             radial-gradient(at 50% 100%, rgba(6, 182, 212, 0.12) 0px, transparent 50%),
+             #0b0f19;
+
+  --bg-card: rgba(17, 24, 39, 0.72);
+  --bg-card-hover: rgba(30, 41, 59, 0.85);
+  --bg-header: rgba(15, 23, 42, 0.75);
+  --bg-sidebar: rgba(11, 15, 25, 0.88);
+  --bg-hover: rgba(30, 41, 59, 0.6);
+  
+  --border-color: rgba(255, 255, 255, 0.08);
+  --border-glass: rgba(255, 255, 255, 0.12);
+  --border-glass-subtle: rgba(255, 255, 255, 0.06);
+
+  --text-main: #f8fafc;
+  --text-regular: #cbd5e1;
+  --text-muted: #94a3b8;
+
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+  --shadow-glass-hover: 0 12px 36px 0 rgba(79, 70, 229, 0.25);
+
+  color-scheme: dark;
+
+  body {
+    background-color: var(--bg-color);
+    background-image: var(--bg-mesh);
+    color: var(--text-main);
+  }
+
+  .vben-card {
+    background: var(--bg-card) !important;
+    border-color: var(--border-glass) !important;
+    box-shadow: var(--shadow-glass);
+  }
+
+  .table-search-bar,
+  .table-card {
+    background: var(--bg-card) !important;
+    border-color: var(--border-glass) !important;
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  }
+
+  .el-card {
+    background: var(--bg-card) !important;
+    border-color: var(--border-glass) !important;
+    color: var(--text-main) !important;
+  }
+
+  .el-dialog, .el-drawer {
+    background: rgba(15, 23, 42, 0.9) !important;
+    border: 1px solid var(--border-glass) !important;
+    backdrop-filter: blur(24px) saturate(200%);
+    -webkit-backdrop-filter: blur(24px) saturate(200%);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6) !important;
+  }
+
+  .el-table {
+    --el-table-bg-color: transparent;
+    --el-table-tr-bg-color: transparent;
+    --el-table-header-bg-color: rgba(30, 41, 59, 0.5);
+    --el-table-border-color: var(--border-glass-subtle);
+    --el-table-row-hover-bg-color: rgba(79, 70, 229, 0.12);
+    color: var(--text-main);
+  }
+
+  .el-input__wrapper, .el-select__wrapper {
+    background-color: rgba(15, 23, 42, 0.6) !important;
+    box-shadow: 0 0 0 1px var(--border-glass) inset !important;
+    backdrop-filter: blur(8px);
+  }
+
+  .kanban-column {
+    background-color: rgba(15, 23, 42, 0.65) !important;
+    border-color: var(--border-glass) !important;
+    backdrop-filter: blur(12px);
+  }
+
+  .task-card {
+    background-color: rgba(30, 41, 59, 0.7) !important;
+    border-color: var(--border-glass) !important;
+  }
+}

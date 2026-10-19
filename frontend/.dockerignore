@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.git/
+.env
+.env.*
+*.log
+.vscode/
+.idea/
+src/**/*.js
+src/**/*.js.map
+Dockerfile
+.dockerignore
+
+# pnpm-workspace.yaml carries pnpm 10+ `allowBuilds` syntax that pnpm 9 rejects
+# ("packages field missing or empty"). The container build is a single package,
+# so the workspace file is not needed inside the image.
+pnpm-workspace.yaml
