@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     AI_MAX_HISTORY_TURNS: int = 20
     AI_MAX_SESSIONS_PER_USER: int = 10
 
+    # ── Knowledge base ────────────────────────────────────────────────────
+    KB_STORAGE_DIR: str = "data/kb"
+    KB_MAX_UPLOAD_MB: int = 25
+
     # ── CORS: comma-separated origins, or "*" for any ─────────────────────
     BACKEND_CORS_ORIGINS: str = "*"
 

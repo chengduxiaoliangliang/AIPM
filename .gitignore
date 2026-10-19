@@ -19,6 +19,9 @@ node_modules/
 dist/
 *.local
 
+# Knowledge base uploads (runtime data)
+backend/data/
+
 # Editor / OS
 .vscode/
 .idea/

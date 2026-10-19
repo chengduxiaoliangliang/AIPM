@@ -63,6 +63,7 @@ docker compose logs -f backend
 |---|---|
 | `aipm_mysql_data` | MySQL 数据文件 |
 | `aipm_redis_data` | Redis AOF |
+| `aipm_kb_data` | 知识库上传的原始文件（挂载到 `/app/data`） |
 
 备份 MySQL：
 
@@ -72,8 +73,26 @@ docker compose exec mysql sh -c \
   > backup-$(date +%F).sql
 ```
 
-## 默认账号
+## 知识库（LLM Wiki）
 
+知识库采用 **LLM Wiki** 模式而非 RAG：上传的资料会被解析为全文，再由大模型增量整合进一个持久化的 Markdown 维基，
+页面之间通过 `[[双链]]` 关联，并自动维护 `index.md`（目录）与 `log.md`（变更日志）。
+
+- **摄入流程**：上传 → 抽取正文 → 大模型分析 → 创建/更新页面 → 重建双链与索引 → 记录日志
+- **体检**：确定性规则（孤岛页、断链、空页、未摄入资料）+ 大模型检查（矛盾、过时、缺失概念）→ 健康分
+- **导出**：整库打包为 zip，按页面类型分目录，带 YAML frontmatter，可直接用 Obsidian 打开
+- **并发**：同一项目的摄入通过 Redis 锁串行化，避免多个任务争抢同一批页面
+
+相关配置：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `KB_STORAGE_DIR` | `data/kb` | 上传文件落盘目录（相对路径基于 backend 目录） |
+| `KB_MAX_UPLOAD_MB` | `25` | 单个文件大小上限 |
+
+支持格式：PDF、Word(.docx)、Excel(.xlsx)、Markdown、TXT、CSV、JSON、HTML、常见代码文件。
+
+## 默认账号
 种子数据内置 5 个账号，密码统一为 `123456`（首次登录后请立即修改）：
 
 | 用户名 | 角色 |

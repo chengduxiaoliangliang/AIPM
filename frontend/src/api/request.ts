@@ -74,3 +74,6 @@ export default async function request<T = any>(config: AxiosRequestConfig): Prom
   const response = await service.request<ApiResponse<T>>(config)
   return response.data
 }
+
+/** Raw axios instance — use for binary responses (blob / file downloads). */
+export { service as http }

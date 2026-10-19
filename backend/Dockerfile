@@ -22,8 +22,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Run as a non-root user
+# Run as a non-root user; /app/data holds uploaded knowledge-base sources
 RUN useradd --create-home --uid 10001 appuser \
+ && mkdir -p /app/data/kb \
  && chown -R appuser:appuser /app
 USER appuser
 

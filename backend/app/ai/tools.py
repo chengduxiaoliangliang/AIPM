@@ -223,32 +223,66 @@ class PermissionScopedTools:
         cls, user: User, db: Session,
         keyword: Optional[str] = None
     ) -> str:
-        """Query project wiki documentation and knowledge base."""
+        """Query the project knowledge base: LLM-wiki pages first, legacy docs second."""
         with _timed("query_wiki_docs"):
             try:
+                from app.models.kb import KBPage
+
                 accessible_pids = cls.get_user_accessible_project_ids(user, db)
-                query = db.query(Document).filter(
+                proj_names = {
+                    p.id: p.name
+                    for p in db.query(Project.id, Project.name)
+                    .filter(Project.id.in_(accessible_pids)).all()
+                } if accessible_pids else {}
+
+                blocks: List[str] = []
+
+                # ── LLM Wiki pages ───────────────────────────────────────
+                if accessible_pids:
+                    q = db.query(KBPage).filter(
+                        KBPage.project_id.in_(accessible_pids),
+                        KBPage.slug.notin_(("index", "log")),
+                    )
+                    if keyword:
+                        q = q.filter(
+                            (KBPage.title.ilike(f"%{keyword}%"))
+                            | (KBPage.content.ilike(f"%{keyword}%"))
+                        )
+                    pages = q.order_by(KBPage.updated_at.desc()).limit(8).all()
+                    if pages:
+                        lines = [f"【知识库维基页面（共 {len(pages)} 篇）】:"]
+                        for p in pages:
+                            pname = proj_names.get(p.project_id, "项目")
+                            lines.append(
+                                f"- [{pname}]《{p.title}》| 类型: {p.page_type} | "
+                                f"摘要: {(p.summary or '无')[:80]} | "
+                                f"更新于: {p.updated_at.strftime('%Y-%m-%d')}"
+                            )
+                        blocks.append("\n".join(lines))
+
+                # ── Legacy free-form documents ───────────────────────────
+                dq = db.query(Document).filter(
                     (Document.project_id.is_(None)) | (Document.project_id.in_(accessible_pids))
                 )
-
                 if keyword:
-                    query = query.filter(
-                        (Document.title.ilike(f"%{keyword}%")) | (Document.content.ilike(f"%{keyword}%"))
+                    dq = dq.filter(
+                        (Document.title.ilike(f"%{keyword}%"))
+                        | (Document.content.ilike(f"%{keyword}%"))
                     )
+                docs = dq.order_by(Document.updated_at.desc()).limit(5).all()
+                if docs:
+                    lines = [f"【传统文档（共 {len(docs)} 篇）】:"]
+                    for d in docs:
+                        pname = d.project.name if d.project else "企业通用知识库"
+                        lines.append(
+                            f"- [{pname}]《{d.title}》| 分类: {d.category} | "
+                            f"更新于: {d.updated_at.strftime('%Y-%m-%d')}"
+                        )
+                    blocks.append("\n".join(lines))
 
-                docs = query.order_by(Document.updated_at.desc()).limit(8).all()
-                if not docs:
+                if not blocks:
                     return "【检索结果】未找到匹配的文档知识库。"
-
-                res = [f"【知识库文档（共 {len(docs)} 篇）】:"]
-                for d in docs:
-                    pname = d.project.name if d.project else "企业通用知识库"
-                    creator = d.creator.nickname if d.creator else "系统"
-                    res.append(
-                        f"- [{pname}]《{d.title}》| 分类: {d.category} | 作者: {creator} | "
-                        f"更新于: {d.updated_at.strftime('%Y-%m-%d')}"
-                    )
-                return "\n".join(res)
+                return "\n\n".join(blocks)
             except Exception as e:
                 logger.warning(f"query_wiki_docs tool error: {e}")
                 return "【系统提示】文档查询暂时不可用，请稍后重试。"
