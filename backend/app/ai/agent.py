@@ -10,6 +10,7 @@ Integrates:
 import json
 import asyncio
 import logging
+from datetime import datetime, timezone, timedelta
 from typing import AsyncGenerator, Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from app.config import settings
@@ -19,6 +20,41 @@ from app.ai.llm_factory import get_llm, is_llm_configured
 from app.ai.session_manager import AISessionManager
 
 logger = logging.getLogger(__name__)
+
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python < 3.9
+    ZoneInfo = None
+
+_WEEKDAY_CN = ["一", "二", "三", "四", "五", "六", "日"]
+
+# Phrases that mean "tell me the current date / time".
+_DATETIME_KEYWORDS = (
+    "几号", "几点", "星期几", "周几", "日期", "当前时间", "现在时间",
+    "今天是什么", "今天是", "现在是什么", "current date", "what day", "what time",
+)
+
+
+def _now() -> datetime:
+    """Current time in the configured timezone (falls back to UTC+8)."""
+    if ZoneInfo is not None:
+        try:
+            return datetime.now(ZoneInfo(settings.APP_TIMEZONE))
+        except Exception:
+            logger.debug("ZoneInfo unavailable for %s, falling back to UTC+8", settings.APP_TIMEZONE)
+    return datetime.now(timezone(timedelta(hours=8)))
+
+
+def format_now() -> str:
+    """Human-readable current date/time, e.g. 2026年10月19日（星期一）22:31."""
+    n = _now()
+    return f"{n.strftime('%Y年%m月%d日')}（星期{_WEEKDAY_CN[n.weekday()]}）{n.strftime('%H:%M')}"
+
+
+def is_datetime_query(message: str) -> bool:
+    msg = message.lower()
+    return any(k in msg for k in _DATETIME_KEYWORDS)
+
 
 
 class AIPMAgentService:
@@ -34,11 +70,16 @@ class AIPMAgentService:
         return f"""你是由 DeepSeek 大模型驱动的 AIPM 项目管理系统【智能小精灵助手】。
 你正在与用户【{user.nickname}（用户名: {user.username}，角色: {', '.join(role_names)}）】对话。
 
+【当前系统时间】{format_now()}
+这是服务器提供的真实时间。当用户询问今天是几号、星期几、现在几点、本月/本季度是哪一段时，
+必须直接使用上述时间作答，绝不可声称"无法获取实时时间"或要求用户自己查看。
+
 【严格执行的权限与安全规则】:
 1. 你必须严格遵循该用户的企业权限边界，绝不向该用户透露其未参与的保密项目、他人的私人薪资或系统超级管理数据。
 2. 你的回答应当专业、富有条理、亲切温暖，使用 Markdown 格式（加粗、列表、表格、代码块）进行排版。
 3. 当用户询问项目进度、任务待办、缺陷、工时或创建任务时，以精准的数据指标结合建议给出答复。
 4. 如果用户请求执行超出其权限的操作，委婉告知权限不足并提示联系系统管理员。
+5. 遇到与项目管理无关的日常小问题（日期时间、简单计算、常识问答），也应当正常、简洁地回答。
 """
 
     @classmethod
@@ -148,6 +189,10 @@ class AIPMAgentService:
         """
         msg = message.lower()
         try:
+            # Authoritative clock — the LLM cannot know what "today" is on its own.
+            if is_datetime_query(message):
+                return f"【系统实时时间】{format_now()}"
+
             if any(k in msg for k in ["创建任务", "新建任务", "建一个任务", "加个任务"]):
                 title = (
                     message
@@ -186,6 +231,12 @@ class AIPMAgentService:
         Generate a contextual Markdown response when LLM is unavailable.
         Uses tool output if available, otherwise provides a capability overview.
         """
+        if is_datetime_query(message):
+            return (
+                f"🕐 **现在是 {format_now()}**\n\n"
+                f"> 当前处于本地降级模式（大模型暂不可用），时间由服务器实时提供。"
+            )
+
         if tool_output:
             return (
                 f"✨ **你好，{user.nickname}！我是您的 AIPM 智能小精灵** 🧚\n\n"

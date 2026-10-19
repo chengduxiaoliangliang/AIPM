@@ -11,6 +11,9 @@ export interface AICapabilities {
   prompt_chips: string[]
   is_deepseek_configured: boolean
   current_session_id: string | null
+  /** Effective model name from runtime config (e.g. deepseek-v4-flash). */
+  model_name?: string
+  provider?: string
 }
 
 export interface AISession {

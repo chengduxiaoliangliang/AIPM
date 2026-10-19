@@ -41,7 +41,11 @@
             <div class="header-meta">
               <div class="meta-title flex-center">
                 <span>AIPM 智能小精灵</span>
-                <span class="model-tag">DeepSeek-V3</span>
+                <span
+                  class="model-tag"
+                  v-if="capabilities?.model_name"
+                  :title="`${capabilities?.provider || 'DeepSeek'} · ${capabilities.model_name}`"
+                >{{ capabilities.model_name }}</span>
                 <span class="status-dot" :class="capabilities?.is_deepseek_configured ? 'online' : 'offline'" :title="capabilities?.is_deepseek_configured ? 'AI 已连接' : 'AI 离线 (本地模式)'"></span>
               </div>
               <div class="meta-subtitle">

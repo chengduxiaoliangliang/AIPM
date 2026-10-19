@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     ENV: str = "development"          # development | production
     DEBUG: bool = False
+    # Timezone used when telling the LLM what "today" is.
+    APP_TIMEZONE: str = "Asia/Shanghai"
 
     # ── MySQL ─────────────────────────────────────────────────────────────
     MYSQL_HOST: str = "127.0.0.1"

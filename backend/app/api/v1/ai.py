@@ -64,6 +64,9 @@ class CapabilitiesResponse(BaseModel):
     prompt_chips: List[str]
     is_deepseek_configured: bool
     current_session_id: Optional[str] = None
+    # Effective model actually used for chat, so the UI never has to hardcode it.
+    model_name: str = ""
+    provider: str = "DeepSeek"
 
 
 class AIStatusResponse(BaseModel):
@@ -157,6 +160,8 @@ def get_ai_capabilities(
     sessions = AISessionManager.get_session_list(current_user.id)
     current_session_id = sessions[0]["session_id"] if sessions else None
 
+    model_info = get_model_info()
+
     return ResponseModel(
         code=200,
         message="success",
@@ -168,6 +173,8 @@ def get_ai_capabilities(
             prompt_chips=chips,
             is_deepseek_configured=is_llm_configured(),
             current_session_id=current_session_id,
+            model_name=model_info.get("model", ""),
+            provider=model_info.get("provider", "DeepSeek"),
         )
     )
 
