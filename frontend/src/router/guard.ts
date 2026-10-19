@@ -1,13 +1,15 @@
 import type { Router } from 'vue-router'
 import { useUserStore } from '@/store/modules/user'
 import { useTagsStore } from '@/store/modules/tags'
+import { authStorage } from '@/utils/auth'
 
 const WHITE_LIST = ['/login']
 
 export function setupRouterGuard(router: Router) {
   router.beforeEach(async (to, from, next) => {
     const userStore = useUserStore()
-    const token = localStorage.getItem('aipm_token')
+    // Read from this tab's storage rather than the (possibly stale) store ref.
+    const token = authStorage.getToken()
 
     if (token) {
       if (to.path === '/login') {

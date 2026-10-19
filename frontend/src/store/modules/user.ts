@@ -1,13 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { loginApi, getUserInfoApi, logoutApi } from '@/api/auth'
+import { authStorage } from '@/utils/auth'
 import type { UserInfo } from '@/types'
 
 export const useUserStore = defineStore('user', () => {
-  const token = ref<string>(localStorage.getItem('aipm_token') || '')
-  const userInfo = ref<UserInfo | null>(
-    localStorage.getItem('aipm_user') ? JSON.parse(localStorage.getItem('aipm_user')!) : null
-  )
+  const token = ref<string>(authStorage.getToken())
+  const userInfo = ref<UserInfo | null>(authStorage.getUser())
 
   const isAuthenticated = computed(() => !!token.value)
   const username = computed(() => userInfo.value?.nickname || userInfo.value?.username || '用户')
@@ -17,9 +16,15 @@ export const useUserStore = defineStore('user', () => {
 
   async function login(loginParams: { username: string; password: string; captcha_token?: string }) {
     const res = await loginApi(loginParams)
+
+    // Starting a new session in this tab: drop any identity left over from a
+    // previous account before writing the new one.
+    userInfo.value = null
+    authStorage.removeUser()
+
     token.value = res.data.token
-    localStorage.setItem('aipm_token', res.data.token)
-    
+    authStorage.setToken(res.data.token)
+
     // Fetch fresh user info & permissions
     await fetchUserInfo()
     return res
@@ -29,10 +34,10 @@ export const useUserStore = defineStore('user', () => {
     try {
       const res = await getUserInfoApi()
       userInfo.value = res.data
-      localStorage.setItem('aipm_user', JSON.stringify(res.data))
+      authStorage.setUser(res.data)
       return res.data
     } catch (e) {
-      logout()
+      await logout()
       throw e
     }
   }
@@ -43,13 +48,19 @@ export const useUserStore = defineStore('user', () => {
         await logoutApi()
       }
     } catch (e) {
-      // ignore
+      // ignore — the local session is cleared regardless
     } finally {
       token.value = ''
       userInfo.value = null
-      localStorage.removeItem('aipm_token')
-      localStorage.removeItem('aipm_user')
+      authStorage.clear()
     }
+  }
+
+  /** Drop local state without calling the API (used when a token is rejected). */
+  function resetLocalSession() {
+    token.value = ''
+    userInfo.value = null
+    authStorage.clear()
   }
 
   function hasPermission(perm: string): boolean {
@@ -69,6 +80,7 @@ export const useUserStore = defineStore('user', () => {
     login,
     fetchUserInfo,
     logout,
+    resetLocalSession,
     hasPermission
   }
 })

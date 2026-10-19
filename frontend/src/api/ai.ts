@@ -1,4 +1,5 @@
 import request from './request'
+import { authStorage } from '@/utils/auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -153,7 +154,7 @@ export async function streamAIChatApi(
   }
 ) {
   const { sessionId, history = [], onToken, onFinish, onError } = options
-  const token = localStorage.getItem('aipm_token')
+  const token = authStorage.getToken()
   try {
     const response = await fetch('/api/v1/ai/chat/stream', {
       method: 'POST',

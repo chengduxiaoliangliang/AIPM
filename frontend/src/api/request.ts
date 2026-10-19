@@ -1,5 +1,6 @@
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios'
 import { ElMessage, ElNotification } from 'element-plus'
+import { authStorage } from '@/utils/auth'
 import type { ApiResponse } from '@/types'
 
 const service = axios.create({
@@ -13,7 +14,7 @@ const service = axios.create({
 // Request interceptor
 service.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('aipm_token')
+    const token = authStorage.getToken()
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -48,8 +49,8 @@ service.interceptors.response.use(
         : '网络请求异常'
 
       if (status === 401) {
-        localStorage.removeItem('aipm_token')
-        localStorage.removeItem('aipm_user')
+        // Clear only this tab's session; other tabs keep their own account.
+        authStorage.clear()
         ElNotification.error({
           title: '认证过期',
           message: '登录状态已失效，请重新登录'
