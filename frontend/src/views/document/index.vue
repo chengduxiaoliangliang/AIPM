@@ -18,6 +18,10 @@
             <span>{{ p.project_name }}</span>
             <span class="opt-meta">{{ p.pages }} 页 / {{ p.sources }} 资料</span>
           </el-option>
+          <el-option label="🌐 全部项目（跨项目检索）" :value="0">
+            <span>🌐 全部项目</span>
+            <span class="opt-meta">跨项目检索</span>
+          </el-option>
         </el-select>
 
         <div class="kb-stats" v-if="activeSummary">
@@ -39,9 +43,9 @@
           <el-button :type="viewMode === 'ask' ? 'primary' : ''" @click="setView('ask')">问答</el-button>
         </el-button-group>
         <el-button :icon="Plus" @click="openCreatePage">新建页面</el-button>
-        <el-button type="primary" :icon="Upload" @click="uploadVisible = true">上传资料</el-button>
+        <el-button type="primary" :icon="Upload" :disabled="isAllProjects" @click="uploadVisible = true">上传资料</el-button>
         <el-button :icon="DataAnalysis" :loading="linting" @click="runLint(false)">体检</el-button>
-        <el-button :icon="Download" @click="exportWiki">导出</el-button>
+        <el-button :icon="Download" :disabled="isAllProjects" @click="exportWiki">导出</el-button>
       </div>
     </div>
 
@@ -83,11 +87,12 @@
                 >
                   <span class="page-dot" :class="`t-${g.type}`"></span>
                   <span class="page-name">{{ p.title }}</span>
+                  <span class="page-proj" v-if="isAllProjects && p.project_name">{{ p.project_name }}</span>
                 </div>
               </div>
             </div>
 
-            <div class="special-links">
+            <div class="special-links" v-if="!isAllProjects">
               <div class="page-item" @click="openSpecial('index')">
                 <el-icon><Files /></el-icon><span class="page-name">知识库索引</span>
               </div>
@@ -117,9 +122,12 @@
         <div v-else-if="viewMode === 'ask'" class="ask-wrap">
           <el-scrollbar class="ask-scroll">
             <div class="ask-inner">
-              <div class="ask-intro" v-if="!askResult && !asking">
+              <div class="ask-intro" v-if="!askText && !asking">
                 <div class="ask-title">基于知识库提问</div>
                 <div class="ask-sub">回答只使用知识库里的页面，并标注来源；资料未覆盖的内容会明确说明。</div>
+                <div class="ask-scope" v-if="isAllProjects">
+                  当前为跨项目检索，将同时搜索你有权访问的全部项目知识库
+                </div>
                 <div class="ask-samples" v-if="askSamples.length">
                   <span v-for="s in askSamples" :key="s" class="ask-sample" @click="askQuestion(s)">{{ s }}</span>
                 </div>
@@ -127,29 +135,35 @@
 
               <div class="ask-q" v-if="askQuestionText">Q：{{ askQuestionText }}</div>
 
-              <div class="ask-loading" v-if="asking">
+              <div class="ask-loading" v-if="asking && !askText">
                 <el-icon class="is-loading"><Loading /></el-icon>
-                <span>正在检索知识库并组织答案…</span>
+                <span>正在检索知识库…</span>
               </div>
 
-              <template v-if="askResult">
+              <template v-if="askText">
                 <div class="markdown-body" v-html="renderAnswer" @click="onContentClick"></div>
-                <div class="backlinks" v-if="askResult.citations.length">
+                <span class="ask-cursor" v-if="asking"></span>
+
+                <div class="backlinks" v-if="askCitations.length">
                   <div class="bl-title">引用页面</div>
                   <div class="bl-list">
                     <span
-                      v-for="c in askResult.citations"
+                      v-for="c in askCitations"
                       :key="c.id"
                       class="bl-chip"
                       @click="openPageById(c.id)"
-                    >{{ c.title }}</span>
+                    >
+                      {{ c.title }}
+                      <em v-if="c.project" class="cite-proj">{{ c.project }}</em>
+                    </span>
                   </div>
                 </div>
-                <div class="ask-actions">
+
+                <div class="ask-actions" v-if="!asking">
                   <el-button size="small" :icon="Document" :loading="savingAnswer" @click="saveAnswer">
                     存入知识库
                   </el-button>
-                  <el-button size="small" link @click="askResult = null; askQuestionText = ''">重新提问</el-button>
+                  <el-button size="small" link @click="resetAsk">重新提问</el-button>
                 </div>
               </template>
             </div>
@@ -237,7 +251,9 @@
         </div>
 
         <el-scrollbar class="right-scroll">
-          <div v-if="!sources.length" class="side-empty">还没有上传任何资料</div>
+          <div v-if="!sources.length" class="side-empty">
+            {{ isAllProjects ? '跨项目模式下不显示资料列表，请切换到具体项目上传或管理资料' : '还没有上传任何资料' }}
+          </div>
 
           <div v-for="s in sources" :key="s.id" class="src-item">
             <div class="src-main">
@@ -426,11 +442,12 @@ import {
   createKBPageApi, updateKBPageApi, deleteKBPageApi, uploadKBSourcesApi,
   deleteKBSourceApi, ingestKBSourceApi, listKBJobsApi, runKBLintApi,
   getLatestKBLintApi, downloadKBSourceApi, exportKBWikiApi, getKBGraphApi,
-  listKBPageVersionsApi, getKBVersionApi, restoreKBVersionApi, askKBApi
+  listKBPageVersionsApi, getKBVersionApi, restoreKBVersionApi,
+  streamAskKBApi, getKBStructureAllApi, getKBGraphAllApi, runKBLintAllApi
 } from '@/api/kb'
 import type {
   KBProjectSummary, KBStructure, KBSource, KBPageBrief, KBPageDetail,
-  KBLintReport, KBIngestJob, KBPageVersionBrief, KBPageVersionDetail, KBAskResult
+  KBLintReport, KBIngestJob, KBPageVersionBrief, KBPageVersionDetail, KBAskCitation
 } from '@/api/kb'
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -470,7 +487,8 @@ const versionPageId = ref<number | null>(null)
 // Knowledge-base Q&A
 const askInput = ref('')
 const askQuestionText = ref('')
-const askResult = ref<KBAskResult | null>(null)
+const askText = ref('')
+const askCitations = ref<KBAskCitation[]>([])
 const asking = ref(false)
 const savingAnswer = ref(false)
 
@@ -495,6 +513,9 @@ const activeSummary = computed(() =>
   projects.value.find((p) => p.project_id === currentProjectId.value)
 )
 
+/** project_id 0 means "all projects" (cross-project mode). */
+const isAllProjects = computed(() => currentProjectId.value === 0)
+
 const nonEmptyGroups = computed(() =>
   (structure.value?.groups || []).filter((g) => g.pages.length > 0)
 )
@@ -513,7 +534,7 @@ function renderMarkdown(src: string) {
 }
 
 const renderedContent = computed(() => renderMarkdown(activePage.value?.content || ''))
-const renderAnswer = computed(() => renderMarkdown(askResult.value?.answer || ''))
+const renderAnswer = computed(() => renderMarkdown(askText.value))
 const renderVersionContent = computed(() => renderMarkdown(activeVersion.value?.content || ''))
 
 /** Question suggestions derived from the project's own pages. */
@@ -590,8 +611,10 @@ async function setGraphMode(mode: 'type' | 'community') {
 }
 
 async function renderGraph() {
-  if (!currentProjectId.value) return
-  const res = await getKBGraphApi(currentProjectId.value)
+  if (!hasProject()) return
+  const res = isAllProjects.value
+    ? await getKBGraphAllApi()
+    : await getKBGraphApi(currentProjectId.value as number)
   const nodes: any[] = res.data?.nodes || []
   const edges: any[] = res.data?.edges || []
   const communities: any[] = res.data?.communities || []
@@ -686,27 +709,43 @@ async function loadProjects() {
   }
 }
 
+function hasProject(): boolean {
+  return typeof currentProjectId.value === 'number'
+}
+
 async function loadStructure() {
-  if (!currentProjectId.value) return
-  const res = await getKBStructureApi(currentProjectId.value)
+  if (!hasProject()) return
+  const res = isAllProjects.value
+    ? await getKBStructureAllApi()
+    : await getKBStructureApi(currentProjectId.value as number)
   structure.value = res.data
 }
 
 async function loadSources() {
-  if (!currentProjectId.value) return
-  const res = await listKBSourcesApi(currentProjectId.value)
+  // Sources belong to a single project — cross-project mode has no source list.
+  if (!hasProject() || isAllProjects.value) {
+    sources.value = []
+    return
+  }
+  const res = await listKBSourcesApi(currentProjectId.value as number)
   sources.value = res.data || []
 }
 
 async function loadLint() {
-  if (!currentProjectId.value) return
-  const res = await getLatestKBLintApi(currentProjectId.value)
+  if (!hasProject() || isAllProjects.value) {
+    lint.value = null
+    return
+  }
+  const res = await getLatestKBLintApi(currentProjectId.value as number)
   lint.value = res.data || null
 }
 
 async function loadJobs() {
-  if (!currentProjectId.value) return
-  const res = await listKBJobsApi(currentProjectId.value)
+  if (!hasProject() || isAllProjects.value) {
+    jobs.value = []
+    return
+  }
+  const res = await listKBJobsApi(currentProjectId.value as number)
   jobs.value = res.data || []
 }
 
@@ -859,10 +898,19 @@ async function tick() {
 
 // ─── lint ────────────────────────────────────────────────────────────────────
 async function runLint(silent: boolean) {
-  if (!currentProjectId.value) return
+  if (!hasProject()) return
   linting.value = true
   try {
-    const res = await runKBLintApi(currentProjectId.value)
+    // In cross-project mode, sweep every accessible project at once.
+    if (isAllProjects.value) {
+      const res = await runKBLintAllApi()
+      const list = res.data || []
+      ElMessage.success(`已完成 ${list.length} 个项目的体检`)
+      await loadProjects()
+      return
+    }
+
+    const res = await runKBLintApi(currentProjectId.value as number)
     lint.value = res.data
     if (!silent) lintVisible.value = true
     else if (res.data) {
@@ -914,29 +962,44 @@ async function askQuestion(preset?: string) {
     ElMessage.warning('请输入问题')
     return
   }
-  if (!currentProjectId.value) return
+  if (!hasProject()) return
 
   askInput.value = q
   askQuestionText.value = q
-  askResult.value = null
+  askText.value = ''
+  askCitations.value = []
   asking.value = true
-  try {
-    const res = await askKBApi(currentProjectId.value, { question: q })
-    askResult.value = res.data
-  } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '提问失败，请稍后重试')
-  } finally {
-    asking.value = false
-  }
+
+  const target = isAllProjects.value ? null : (currentProjectId.value as number)
+  await streamAskKBApi(target, q, {
+    onCitations: (c) => { askCitations.value = c },
+    onToken: (t) => { askText.value += t },
+    onFinish: () => { asking.value = false },
+    onError: (e: any) => {
+      asking.value = false
+      ElMessage.error(e?.message || '提问失败，请稍后重试')
+    }
+  })
+  asking.value = false
+}
+
+function resetAsk() {
+  askText.value = ''
+  askCitations.value = []
+  askQuestionText.value = ''
 }
 
 async function saveAnswer() {
-  if (!askResult.value || !currentProjectId.value || !askQuestionText.value) return
+  if (!askText.value || !askQuestionText.value) return
+  if (!hasProject() || isAllProjects.value) {
+    ElMessage.warning('请先切换到具体项目，再保存到知识库')
+    return
+  }
   savingAnswer.value = true
   try {
-    const refs = askResult.value.citations.map((c) => `- [[${c.title}]]`).join('\n')
-    const content = askResult.value.answer + (refs ? `\n\n## 参考页面\n${refs}` : '')
-    const res = await createKBPageApi(currentProjectId.value, {
+    const refs = askCitations.value.map((c) => `- [[${c.title}]]`).join('\n')
+    const content = askText.value + (refs ? `\n\n## 参考页面\n${refs}` : '')
+    const res = await createKBPageApi(currentProjectId.value as number, {
       title: `问答：${askQuestionText.value.slice(0, 40)}`,
       page_type: 'topic',
       summary: askQuestionText.value.slice(0, 200),
@@ -1390,5 +1453,28 @@ onBeforeUnmount(() => {
 .ver-preview-head {
   display: flex; align-items: center; justify-content: space-between;
   font-size: 12px; color: var(--text-muted); margin-bottom: 10px;
+}
+
+/* Cross-project bits */
+.page-proj {
+  margin-left: auto; flex-shrink: 0;
+  max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10.5px; color: var(--text-muted);
+  background: rgba(0, 0, 0, .05); border-radius: 999px; padding: 0 6px;
+}
+.ask-scope {
+  display: inline-block; margin-top: 12px;
+  font-size: 12px; color: #2b6fd4;
+  background: rgba(64, 158, 255, .08);
+  padding: 4px 12px; border-radius: 999px;
+}
+.ask-cursor {
+  display: inline-block; width: 7px; height: 15px; margin-left: 2px;
+  background: #409eff; vertical-align: -2px;
+  animation: kb-blink 1s steps(2, start) infinite;
+}
+@keyframes kb-blink { to { visibility: hidden; } }
+.cite-proj {
+  font-style: normal; font-size: 10px; opacity: .65; margin-left: 4px;
 }
 </style>

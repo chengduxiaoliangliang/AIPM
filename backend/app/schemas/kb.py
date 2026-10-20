@@ -120,6 +120,7 @@ class KBAskCitation(BaseModel):
     id: int
     title: str
     page_type: str
+    project: Optional[str] = None
 
 
 class KBAskResponse(BaseModel):

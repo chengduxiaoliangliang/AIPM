@@ -991,66 +991,161 @@ def _keyword_candidates(db: Session, project_id: int, question: str, limit: int 
     return [p for s, p in scored[:limit]]
 
 
-async def answer_question(
+def _gather_candidates(
     db: Session,
-    project: Project,
+    projects: List[Project],
     question: str,
-    user_id: Optional[int] = None,
-) -> Dict[str, Any]:
-    """Answer a question from the wiki, with citations."""
-    candidates = _keyword_candidates(db, project.id, question)
-    if not candidates:
-        return {
-            "answer": "知识库中还没有可用的页面，无法回答。请先上传资料并完成摄入。",
-            "citations": [], "used_llm": False,
-        }
+    per_project: int = 8,
+    total: int = 16,
+) -> List[KBPage]:
+    """Collect candidate pages across one or more projects."""
+    out: List[KBPage] = []
+    seen = set()
+    for proj in projects:
+        for page in _keyword_candidates(db, proj.id, question, limit=per_project):
+            if page.id in seen:
+                continue
+            seen.add(page.id)
+            out.append(page)
+    return out[:total]
 
-    # Step 1 — let the model pick the relevant pages from a compact catalog.
-    selected: Optional[List[KBPage]] = None
+
+async def _select_pages(question: str, candidates: List[KBPage]) -> List[KBPage]:
+    """Let the model narrow the candidate set; fall back to the top few."""
     if is_llm_configured() and settings.AI_ENABLED:
         catalog = "\n".join(
             f"- {p.title}：{(p.summary or '')[:80]}" for p in candidates
         )
         picked = await _llm_json(
             WIKI_SCHEMA,
-            ASK_SELECT_PROMPT.format(limit=6) + f"\n\n【页面目录】\n{catalog}\n\n【问题】\n{question}",
+            ASK_SELECT_PROMPT.format(limit=6)
+            + f"\n\n【页面目录】\n{catalog}\n\n【问题】\n{question}",
         )
         if picked and isinstance(picked.get("pages"), list):
             wanted = {str(t).strip().lower() for t in picked["pages"]}
             chosen = [p for p in candidates if p.title.strip().lower() in wanted]
             if chosen:
-                selected = chosen
-    if selected is None:
-        selected = candidates[:4]
+                return chosen
+    return candidates[:4]
 
-    # Step 2 — answer strictly from those pages.
-    body = "\n\n".join(
+
+def _answer_body(selected: List[KBPage]) -> str:
+    return "\n\n".join(
         f"### {p.title}\n{(p.content or '')[:3000]}" for p in selected[:5]
     )
+
+
+def _fallback_answer(selected: List[KBPage]) -> str:
+    return (
+        "> ⚠️ 大模型暂不可用，以下是与问题最相关的页面，请直接查阅：\n\n"
+        + "\n".join(
+            f"- **{p.title}** — {(p.summary or (p.content or '')[:100]).strip()}"
+            for p in selected
+        )
+    )
+
+
+def _citations(pages: List[KBPage], proj_names: Dict[int, str]) -> List[dict]:
+    out = []
+    for p in pages:
+        item = {"id": p.id, "title": p.title, "page_type": p.page_type}
+        if len(proj_names) > 1:
+            item["project"] = proj_names.get(p.project_id, "")
+        out.append(item)
+    return out
+
+
+async def answer_question(
+    db: Session,
+    projects: List[Project],
+    question: str,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Answer a question from one or more wikis, with citations."""
+    if isinstance(projects, Project):
+        projects = [projects]
+    proj_names = {p.id: p.name for p in projects}
+
+    candidates = _gather_candidates(db, projects, question)
+    if not candidates:
+        return {
+            "answer": "知识库中还没有可用的页面，无法回答。请先上传资料并完成摄入。",
+            "citations": [], "used_llm": False,
+        }
+
+    selected = await _select_pages(question, candidates)
+
     answer = await _llm_text(
         WIKI_SCHEMA,
-        ASK_ANSWER_PROMPT.format(question=question, pages=body),
+        ASK_ANSWER_PROMPT.format(question=question, pages=_answer_body(selected)),
     )
 
     used_llm = answer is not None
     if not used_llm:
-        answer = (
-            "> ⚠️ 大模型暂不可用，以下是与问题最相关的页面，请直接查阅：\n\n"
-            + "\n".join(
-                f"- **{p.title}** — {(p.summary or (p.content or '')[:100]).strip()}"
-                for p in selected
-            )
-        )
+        answer = _fallback_answer(selected)
 
-    # Cite the pages the answer actually references; fall back to all of them.
     cited = [p for p in selected if p.title and p.title in (answer or "")]
     if not cited:
         cited = selected[:3]
 
     return {
         "answer": answer,
-        "citations": [
-            {"id": p.id, "title": p.title, "page_type": p.page_type} for p in cited
-        ],
+        "citations": _citations(cited, proj_names),
         "used_llm": used_llm,
     }
+
+
+async def stream_answer(
+    db: Session,
+    projects: List[Project],
+    question: str,
+    user_id: Optional[int] = None,
+):
+    """Yield SSE-ready events for a streamed answer.
+
+    Event shapes:
+      {"status": "retrieving"}
+      {"status": "citations", "citations": [...]}
+      {"status": "streaming", "content": "..."}
+      {"status": "finished", "content": ""}
+    """
+    if isinstance(projects, Project):
+        projects = [projects]
+    proj_names = {p.id: p.name for p in projects}
+
+    yield {"status": "retrieving"}
+
+    candidates = _gather_candidates(db, projects, question)
+    if not candidates:
+        yield {
+            "status": "streaming",
+            "content": "知识库中还没有可用的页面，无法回答。请先上传资料并完成摄入。",
+        }
+        yield {"status": "finished", "content": ""}
+        return
+
+    selected = await _select_pages(question, candidates)
+    yield {"status": "citations", "citations": _citations(selected[:5], proj_names)}
+
+    llm = get_llm(streaming=True) if (is_llm_configured() and settings.AI_ENABLED) else None
+    if llm is None:
+        yield {"status": "streaming", "content": _fallback_answer(selected)}
+        yield {"status": "finished", "content": ""}
+        return
+
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        prompt = ASK_ANSWER_PROMPT.format(question=question, pages=_answer_body(selected))
+        async for chunk in llm.astream([
+            SystemMessage(content=WIKI_SCHEMA),
+            HumanMessage(content=prompt),
+        ]):
+            text = chunk.content if hasattr(chunk, "content") else str(chunk)
+            if text:
+                yield {"status": "streaming", "content": text}
+    except Exception as exc:
+        logger.warning("KB stream answer failed: %s", exc)
+        yield {"status": "streaming", "content": f"\n\n> ⚠️ 生成中断：{exc}"}
+
+    yield {"status": "finished", "content": ""}

@@ -1,3 +1,7 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -6,12 +10,45 @@ from app.config import settings
 from app.api.v1 import api_router
 from app.core.exceptions import CustomException
 
+# Without this, application loggers have no handler and every INFO message
+# (scheduler start, ingest progress, LLM init) is silently dropped — only
+# WARNING+ reaches stderr via logging.lastResort.
+logging.basicConfig(
+    level=logging.DEBUG if settings.DEBUG else logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+)
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start the periodic knowledge-base health check alongside the app."""
+    task = None
+    try:
+        from app.services.kb_scheduler import scheduler_loop
+        task = asyncio.create_task(scheduler_loop())
+    except Exception:
+        logger.exception("Failed to start KB lint scheduler")
+
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url=f"{settings.API_V1_STR}/docs",
-    redoc_url=f"{settings.API_V1_STR}/redoc"
+    redoc_url=f"{settings.API_V1_STR}/redoc",
+    lifespan=lifespan,
 )
 
 # CORS middleware

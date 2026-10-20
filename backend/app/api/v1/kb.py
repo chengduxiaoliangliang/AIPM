@@ -707,6 +707,28 @@ def latest_lint(
     return ResponseModel(code=200, message="success", data=_lint_out(r) if r else None)
 
 
+def _accessible_projects(db: Session, user: User) -> List[Project]:
+    if _is_admin(user):
+        return db.query(Project).order_by(Project.updated_at.desc()).all()
+    ids = PermissionScopedTools.get_user_accessible_project_ids(user, db)
+    return db.query(Project).filter(Project.id.in_(ids)).all() if ids else []
+
+
+def _sse(agen):
+    """Wrap an event async-generator into SSE frames."""
+    async def _gen():
+        async for ev in agen:
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+    return _gen()
+
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+
 # ─── Q&A over the wiki ───────────────────────────────────────────────────────
 
 @router.post("/projects/{project_id}/ask", response_model=ResponseModel[KBAskResponse])
@@ -770,6 +792,191 @@ async def ask_knowledge_base(
         saved_page_id=saved_id,
         saved_page_title=saved_title,
     ))
+
+
+@router.post("/projects/{project_id}/ask/stream")
+async def ask_knowledge_base_stream(
+    project_id: int,
+    payload: KBAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Streamed version of /ask — same retrieval, token-by-token answer."""
+    project = _assert_project(db, project_id, current_user)
+    question = (payload.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    return StreamingResponse(
+        _sse(kb_wiki.stream_answer(db, [project], question, current_user.id)),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+# ─── cross-project knowledge base ────────────────────────────────────────────
+
+@router.post("/ask", response_model=ResponseModel[KBAskResponse])
+async def ask_all_projects(
+    payload: KBAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Ask across every project the user can access."""
+    question = (payload.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    projects = _accessible_projects(db, current_user)
+    if not projects:
+        raise HTTPException(status_code=400, detail="没有可访问的项目")
+
+    result = await kb_wiki.answer_question(db, projects, question, current_user.id)
+    return ResponseModel(code=200, message="success", data=KBAskResponse(
+        answer=result["answer"],
+        citations=[KBAskCitation(**c) for c in result.get("citations", [])],
+        used_llm=result.get("used_llm", False),
+    ))
+
+
+@router.post("/ask/stream")
+async def ask_all_projects_stream(
+    payload: KBAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    question = (payload.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    projects = _accessible_projects(db, current_user)
+    if not projects:
+        raise HTTPException(status_code=400, detail="没有可访问的项目")
+
+    return StreamingResponse(
+        _sse(kb_wiki.stream_answer(db, projects, question, current_user.id)),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+@router.get("/structure/all", response_model=ResponseModel[Dict[str, Any]])
+def structure_all(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Merged knowledge structure across all accessible projects."""
+    projects = _accessible_projects(db, current_user)
+    groups: Dict[str, List[dict]] = {}
+    total = 0
+
+    for proj in projects:
+        pages = (
+            db.query(KBPage)
+            .filter(KBPage.project_id == proj.id, KBPage.slug.notin_(_RESERVED))
+            .order_by(KBPage.title.asc())
+            .all()
+        )
+        for page in pages:
+            item = _page_brief(page).model_dump()
+            item["project_id"] = proj.id
+            item["project_name"] = proj.name
+            groups.setdefault(page.page_type, []).append(item)
+            total += 1
+
+    return ResponseModel(code=200, message="success", data={
+        "project_id": 0,
+        "project_name": "全部项目",
+        "groups": [
+            {"type": t, "label": kb_wiki.TYPE_LABELS.get(t, t), "pages": groups.get(t, [])}
+            for t in kb_wiki.PAGE_TYPES
+        ],
+        "special": {},
+        "total_pages": total,
+    })
+
+
+@router.get("/graph/all", response_model=ResponseModel[Dict[str, Any]])
+def graph_all(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Merged graph across projects; communities are detected globally."""
+    projects = _accessible_projects(db, current_user)
+    proj_names = {p.id: p.name for p in projects}
+
+    pages: List[KBPage] = []
+    links: List[KBLink] = []
+    for proj in projects:
+        pages.extend(db.query(KBPage).filter(KBPage.project_id == proj.id).all())
+        links.extend(db.query(KBLink).filter(KBLink.project_id == proj.id).all())
+
+    inbound: Dict[int, int] = {}
+    for l in links:
+        inbound[l.to_page_id] = inbound.get(l.to_page_id, 0) + 1
+
+    comm_of = kb_wiki.detect_communities(
+        [p.id for p in pages], [(l.from_page_id, l.to_page_id) for l in links]
+    )
+
+    buckets: Dict[int, List[KBPage]] = {}
+    for p in pages:
+        buckets.setdefault(comm_of.get(p.id, 0), []).append(p)
+
+    communities = []
+    for cid, members in sorted(buckets.items()):
+        hub = max(members, key=lambda m: inbound.get(m.id, 0))
+        communities.append({
+            "id": cid, "label": hub.title, "size": len(members),
+            "pages": [m.id for m in members],
+        })
+
+    return ResponseModel(code=200, message="success", data={
+        "nodes": [
+            {"id": p.id, "title": p.title, "type": p.page_type,
+             "inbound": inbound.get(p.id, 0),
+             "community": comm_of.get(p.id, 0),
+             "project_id": p.project_id,
+             "project_name": proj_names.get(p.project_id, ""),
+             "reserved": p.slug in _RESERVED}
+            for p in pages
+        ],
+        "edges": [{"source": l.from_page_id, "target": l.to_page_id} for l in links],
+        "communities": communities,
+    })
+
+
+@router.post("/lint/all", response_model=ResponseModel[List[Dict[str, Any]]])
+async def lint_all_projects(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Health-check every accessible project (manual trigger for the scheduler)."""
+    if not _is_admin(current_user):
+        raise ForbiddenException("仅管理员可执行全量体检")
+
+    results: List[Dict[str, Any]] = []
+    for proj in _accessible_projects(db, current_user):
+        page_count = db.query(func.count(KBPage.id)).filter(
+            KBPage.project_id == proj.id, KBPage.slug.notin_(_RESERVED)
+        ).scalar() or 0
+        if page_count == 0:
+            continue
+        report = await kb_wiki.lint_project(db, proj, current_user.id)
+        try:
+            issue_count = len(json.loads(report.issues_json or "[]"))
+        except Exception:
+            issue_count = 0
+        results.append({
+            "project_id": proj.id, "project_name": proj.name,
+            "score": report.score, "issues": issue_count,
+        })
+
+    return ResponseModel(
+        code=200,
+        message=f"已完成 {len(results)} 个项目的体检",
+        data=results,
+    )
 
 
 # ─── export ──────────────────────────────────────────────────────────────────

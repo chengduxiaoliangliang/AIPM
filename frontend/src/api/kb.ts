@@ -1,4 +1,5 @@
 import request, { http } from './request'
+import { authStorage } from '@/utils/auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,8 @@ export interface KBPageBrief {
   summary?: string | null
   tags?: string | null
   updated_at: string
+  project_id?: number
+  project_name?: string
 }
 
 export interface KBLinkRef {
@@ -110,6 +113,8 @@ export interface KBGraphNode {
   inbound: number
   community?: number
   reserved: boolean
+  project_id?: number
+  project_name?: string
 }
 
 export interface KBGraphEdge {
@@ -151,6 +156,7 @@ export interface KBAskCitation {
   id: number
   title: string
   page_type: string
+  project?: string
 }
 
 export interface KBAskResult {
@@ -297,4 +303,94 @@ export function askKBApi(
     data: payload,
     timeout: 240000
   })
+}
+
+// ─── cross-project ────────────────────────────────────────────────────────────
+
+export function getKBStructureAllApi() {
+  return request<KBStructure>({ url: '/kb/structure/all', method: 'GET' })
+}
+
+export function getKBGraphAllApi() {
+  return request<KBGraph>({ url: '/kb/graph/all', method: 'GET' })
+}
+
+export function runKBLintAllApi() {
+  return request<{ project_id: number; project_name: string; score: number; issues: number }[]>({
+    url: '/kb/lint/all',
+    method: 'POST',
+    timeout: 600000
+  })
+}
+
+// ─── streamed Q&A ─────────────────────────────────────────────────────────────
+
+/**
+ * Ask the knowledge base and stream the answer token by token.
+ * Pass `projectId = null` to search across all accessible projects.
+ */
+export async function streamAskKBApi(
+  projectId: number | null,
+  question: string,
+  handlers: {
+    onCitations?: (c: KBAskCitation[]) => void
+    onToken: (t: string) => void
+    onFinish: () => void
+    onError: (e: any) => void
+  }
+) {
+  const { onCitations, onToken, onFinish, onError } = handlers
+  const token = authStorage.getToken()
+  const url = projectId
+    ? `/api/v1/kb/projects/${projectId}/ask/stream`
+    : '/api/v1/kb/ask/stream'
+
+  let finished = false
+  const finishOnce = () => {
+    if (!finished) {
+      finished = true
+      onFinish()
+    }
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ question })
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+    const reader = response.body?.getReader()
+    const decoder = new TextDecoder('utf-8')
+    if (!reader) throw new Error('当前浏览器不支持流式响应')
+
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const frames = buffer.split('\n\n')
+      buffer = frames.pop() || ''
+
+      for (const frame of frames) {
+        const line = frame.trim()
+        if (!line.startsWith('data: ')) continue
+        try {
+          const d = JSON.parse(line.slice(6))
+          if (d.status === 'citations' && d.citations) onCitations?.(d.citations)
+          else if (d.status === 'streaming' && d.content) onToken(d.content)
+          else if (d.status === 'finished') finishOnce()
+        } catch {
+          // ignore partial frames
+        }
+      }
+    }
+    finishOnce()
+  } catch (e) {
+    onError(e)
+  }
 }

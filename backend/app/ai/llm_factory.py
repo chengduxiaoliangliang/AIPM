@@ -3,19 +3,24 @@ LLM Factory — Centralized, singleton-friendly LangChain LLM instance managemen
 
 Provides:
 - A ChatOpenAI-compatible client for DeepSeek (reads runtime config from Redis first)
+- Separate cached instances for streaming and non-streaming use
 - Token estimation utility
 - Connection health check
 """
 import logging
-import time
 from typing import Optional
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Module-level singleton
-_llm_instance = None
-_llm_config_hash: str = ""  # Track config hash to detect changes
+# Cache keyed by (config hash, streaming flag).
+#
+# The streaming flag MUST be part of the key: a ChatOpenAI built with
+# streaming=False returns its whole answer in a single chunk even when you call
+# astream(). Reusing such an instance for a streaming endpoint silently degrades
+# it to one big chunk, which is very hard to notice.
+_llm_cache: dict = {}
 
 
 def _get_config() -> dict:
@@ -35,18 +40,23 @@ def _get_config() -> dict:
 
 
 def _config_hash(cfg: dict) -> str:
-    """Simple hash to detect config changes and rebuild LLM instance."""
-    return f"{cfg.get('api_key','')}|{cfg.get('base_url','')}|{cfg.get('model','')}|{cfg.get('temperature','')}|{cfg.get('max_tokens','')}"
+    """Simple hash to detect config changes and rebuild LLM instances."""
+    return (
+        f"{cfg.get('api_key','')}|{cfg.get('base_url','')}|"
+        f"{cfg.get('model','')}|{cfg.get('temperature','')}|{cfg.get('max_tokens','')}"
+    )
 
 
 def get_llm(streaming: bool = True):
     """
     Get (or create) the DeepSeek ChatOpenAI instance.
-    Automatically rebuilds if runtime config has changed (e.g., admin updated API key).
-    Returns None if API key is not configured.
-    """
-    global _llm_instance, _llm_config_hash
 
+    One instance is cached per (config, streaming) pair. The cache is invalidated
+    automatically when the runtime config changes (e.g. admin updates the API key
+    or model in the management console).
+
+    Returns None if the API key is not configured.
+    """
     cfg = _get_config()
     api_key = cfg.get("api_key", "").strip()
 
@@ -54,26 +64,21 @@ def get_llm(streaming: bool = True):
         logger.warning("DeepSeek API key not configured — LLM disabled.")
         return None
 
-    current_hash = _config_hash(cfg)
-    if _llm_instance is not None and current_hash == _llm_config_hash:
-        # Config unchanged, reuse existing instance
-        return _llm_instance
+    cfg_hash = _config_hash(cfg)
+    key = (cfg_hash, bool(streaming))
+    if key in _llm_cache:
+        return _llm_cache[key]
 
-    # Build or rebuild LLM instance
     try:
         from langchain_openai import ChatOpenAI
-        _llm_instance = ChatOpenAI(
+
+        instance = ChatOpenAI(
             model=cfg.get("model", settings.DEEPSEEK_MODEL),
             api_key=api_key,
             base_url=cfg.get("base_url", settings.DEEPSEEK_BASE_URL),
             temperature=float(cfg.get("temperature", settings.DEEPSEEK_TEMPERATURE)),
             max_tokens=int(cfg.get("max_tokens", settings.DEEPSEEK_MAX_TOKENS)),
             streaming=streaming,
-        )
-        _llm_config_hash = current_hash
-        logger.info(
-            f"LLM factory {'rebuilt' if _llm_config_hash else 'initialized'}: "
-            f"model={cfg.get('model')}, base_url={cfg.get('base_url')}"
         )
     except ImportError:
         logger.error("langchain-openai is not installed. Run: pip install langchain-openai")
@@ -82,14 +87,21 @@ def get_llm(streaming: bool = True):
         logger.error(f"Failed to initialize LLM: {e}")
         return None
 
-    return _llm_instance
+    # Drop instances built from a stale config so old keys/URLs don't linger.
+    for stale in [k for k in _llm_cache if k[0] != cfg_hash]:
+        _llm_cache.pop(stale, None)
+
+    _llm_cache[key] = instance
+    logger.info(
+        "LLM initialized: model=%s, streaming=%s, base_url=%s",
+        cfg.get("model"), streaming, cfg.get("base_url"),
+    )
+    return instance
 
 
 def reset_llm():
-    """Force re-creation of the LLM instance on next call."""
-    global _llm_instance, _llm_config_hash
-    _llm_instance = None
-    _llm_config_hash = ""
+    """Force re-creation of the LLM instances on next call."""
+    _llm_cache.clear()
     logger.info("LLM instance reset.")
 
 

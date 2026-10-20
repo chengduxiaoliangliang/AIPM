@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     # ── Knowledge base ────────────────────────────────────────────────────
     KB_STORAGE_DIR: str = "data/kb"
     KB_MAX_UPLOAD_MB: int = 25
+    # Periodic health check. Set KB_LINT_INTERVAL_HOURS=0 to disable.
+    KB_LINT_ENABLED: bool = True
+    KB_LINT_INTERVAL_HOURS: int = 24
+    KB_LINT_INITIAL_DELAY_MIN: int = 10
 
     # ── CORS: comma-separated origins, or "*" for any ─────────────────────
     BACKEND_CORS_ORIGINS: str = "*"
