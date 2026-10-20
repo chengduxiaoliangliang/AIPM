@@ -43,13 +43,14 @@ from app.api.deps import get_current_user
 from app.config import settings
 from app.core.exceptions import ForbiddenException, NotFoundException
 from app.database import get_db
-from app.models.kb import KBIngestJob, KBLink, KBLintReport, KBPage, KBSource
+from app.models.kb import KBIngestJob, KBLink, KBLintReport, KBPage, KBPageVersion, KBSource
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.common import ResponseModel
 from app.schemas.kb import (
+    KBAskCitation, KBAskRequest, KBAskResponse,
     KBIngestJobOut, KBLintOut, KBPageBrief, KBPageOut, KBPageUpsert,
-    KBProjectSummary, KBSourceOut,
+    KBPageVersionBrief, KBPageVersionOut, KBProjectSummary, KBSourceOut,
 )
 from app.services import kb_extract, kb_wiki
 
@@ -217,18 +218,41 @@ def project_graph(
     _assert_project(db, project_id, current_user)
     pages = db.query(KBPage).filter(KBPage.project_id == project_id).all()
     links = db.query(KBLink).filter(KBLink.project_id == project_id).all()
+
     inbound: Dict[int, int] = {}
     for l in links:
         inbound[l.to_page_id] = inbound.get(l.to_page_id, 0) + 1
+
+    comm_of = kb_wiki.detect_communities(
+        [p.id for p in pages],
+        [(l.from_page_id, l.to_page_id) for l in links],
+    )
+
+    # Each cluster is named after its most-referenced member.
+    buckets: Dict[int, List[KBPage]] = {}
+    for p in pages:
+        buckets.setdefault(comm_of.get(p.id, 0), []).append(p)
+
+    communities = []
+    for cid, members in sorted(buckets.items()):
+        hub = max(members, key=lambda m: inbound.get(m.id, 0))
+        communities.append({
+            "id": cid,
+            "label": hub.title,
+            "size": len(members),
+            "pages": [m.id for m in members],
+        })
 
     return ResponseModel(code=200, message="success", data={
         "nodes": [
             {"id": p.id, "title": p.title, "type": p.page_type,
              "inbound": inbound.get(p.id, 0),
+             "community": comm_of.get(p.id, 0),
              "reserved": p.slug in _RESERVED}
             for p in pages
         ],
         "edges": [{"source": l.from_page_id, "target": l.to_page_id} for l in links],
+        "communities": communities,
     })
 
 
@@ -324,6 +348,7 @@ def create_page(
     )
     db.add(page)
     db.flush()
+    kb_wiki.snapshot_page(db, page, "create", user_id=current_user.id)
     kb_wiki.rebuild_links(db, project_id)
     kb_wiki.rebuild_index(db, project_id)
     db.commit()
@@ -355,6 +380,7 @@ def update_page(
     page.updated_at = datetime.utcnow()
 
     db.flush()
+    kb_wiki.snapshot_page(db, page, "manual", user_id=current_user.id)
     kb_wiki.rebuild_links(db, page.project_id)
     kb_wiki.rebuild_index(db, page.project_id)
     db.commit()
@@ -382,6 +408,91 @@ def delete_page(
     kb_wiki.rebuild_index(db, project_id)
     db.commit()
     return ResponseModel(code=200, message="页面已删除")
+
+
+# ─── page versions ───────────────────────────────────────────────────────────
+
+@router.get("/pages/{page_id}/versions", response_model=ResponseModel[List[KBPageVersionBrief]])
+def list_page_versions(
+    page_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    page = db.get(KBPage, page_id)
+    if not page:
+        raise NotFoundException("页面不存在")
+    _assert_project(db, page.project_id, current_user)
+
+    rows = (
+        db.query(KBPageVersion)
+        .filter(KBPageVersion.page_id == page_id)
+        .order_by(KBPageVersion.version_no.desc())
+        .limit(100)
+        .all()
+    )
+    return ResponseModel(code=200, message="success", data=[
+        KBPageVersionBrief(
+            id=v.id, page_id=v.page_id, version_no=v.version_no, title=v.title,
+            change_type=v.change_type, source_id=v.source_id, created_at=v.created_at,
+        ) for v in rows
+    ])
+
+
+@router.get("/versions/{version_id}", response_model=ResponseModel[KBPageVersionOut])
+def get_version(
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    v = db.get(KBPageVersion, version_id)
+    if not v:
+        raise NotFoundException("版本不存在")
+    _assert_project(db, v.project_id, current_user)
+    return ResponseModel(code=200, message="success", data=KBPageVersionOut(
+        id=v.id, page_id=v.page_id, version_no=v.version_no, title=v.title,
+        change_type=v.change_type, source_id=v.source_id, created_at=v.created_at,
+        summary=v.summary, content=v.content, tags=v.tags, page_type=v.page_type,
+    ))
+
+
+@router.post("/versions/{version_id}/restore", response_model=ResponseModel[KBPageBrief])
+def restore_version(
+    version_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Roll a page back to an earlier snapshot (the rollback is itself versioned)."""
+    v = db.get(KBPageVersion, version_id)
+    if not v:
+        raise NotFoundException("版本不存在")
+    page = db.get(KBPage, v.page_id)
+    if not page:
+        raise NotFoundException("页面已被删除")
+    _assert_project(db, page.project_id, current_user)
+    if page.slug in _RESERVED:
+        raise HTTPException(status_code=400, detail="系统页面不可回滚")
+
+    page.title = v.title
+    page.summary = v.summary
+    page.content = v.content
+    page.tags = v.tags
+    if v.page_type in kb_wiki.PAGE_TYPES:
+        page.page_type = v.page_type
+    page.generated_by = "manual"
+    page.updated_at = datetime.utcnow()
+
+    db.flush()
+    kb_wiki.snapshot_page(db, page, "restore", user_id=current_user.id)
+    kb_wiki.rebuild_links(db, page.project_id)
+    kb_wiki.rebuild_index(db, page.project_id)
+    kb_wiki.append_log(
+        db, page.project_id,
+        f"restore | {page.title}",
+        f"回滚到 v{v.version_no}（{v.created_at.strftime('%Y-%m-%d %H:%M')}）",
+    )
+    db.commit()
+    db.refresh(page)
+    return ResponseModel(code=200, message=f"已回滚到 v{v.version_no}", data=_page_brief(page))
 
 
 # ─── sources ─────────────────────────────────────────────────────────────────
@@ -594,6 +705,71 @@ def latest_lint(
         .first()
     )
     return ResponseModel(code=200, message="success", data=_lint_out(r) if r else None)
+
+
+# ─── Q&A over the wiki ───────────────────────────────────────────────────────
+
+@router.post("/projects/{project_id}/ask", response_model=ResponseModel[KBAskResponse])
+async def ask_knowledge_base(
+    project_id: int,
+    payload: KBAskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Answer a question from wiki pages, optionally filing the answer back."""
+    project = _assert_project(db, project_id, current_user)
+    question = (payload.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    result = await kb_wiki.answer_question(db, project, question, current_user.id)
+
+    saved_id = saved_title = None
+    if payload.save_as_page and result.get("answer"):
+        base_title = f"问答：{question[:40]}"
+        slug = kb_wiki.slugify(base_title)
+        suffix = 2
+        while db.query(KBPage).filter(
+            KBPage.project_id == project_id, KBPage.slug == slug
+        ).first():
+            slug = kb_wiki.slugify(f"{base_title}-{suffix}")
+            suffix += 1
+            if suffix > 50:
+                break
+
+        ptype = payload.page_type if payload.page_type in kb_wiki.PAGE_TYPES else "topic"
+        refs = "\n".join(f"- [[{c['title']}]]" for c in result.get("citations", []))
+        page = KBPage(
+            project_id=project_id,
+            slug=slug,
+            title=base_title[:255],
+            page_type=ptype,
+            summary=question[:500],
+            content=result["answer"] + (f"\n\n## 参考页面\n{refs}" if refs else ""),
+            tags="问答",
+            generated_by="manual",
+            created_by=current_user.id,
+        )
+        db.add(page)
+        db.flush()
+        kb_wiki.snapshot_page(db, page, "create", user_id=current_user.id)
+        kb_wiki.rebuild_links(db, project_id)
+        kb_wiki.rebuild_index(db, project_id)
+        kb_wiki.append_log(
+            db, project_id, f"query | {question[:60]}",
+            "问答结果已归档为知识库页面",
+        )
+        db.commit()
+        db.refresh(page)
+        saved_id, saved_title = page.id, page.title
+
+    return ResponseModel(code=200, message="success", data=KBAskResponse(
+        answer=result["answer"],
+        citations=[KBAskCitation(**c) for c in result.get("citations", [])],
+        used_llm=result.get("used_llm", False),
+        saved_page_id=saved_id,
+        saved_page_title=saved_title,
+    ))
 
 
 # ─── export ──────────────────────────────────────────────────────────────────

@@ -36,6 +36,7 @@
         <el-button-group class="view-toggle">
           <el-button :type="viewMode === 'reader' ? 'primary' : ''" @click="setView('reader')">阅读</el-button>
           <el-button :type="viewMode === 'graph' ? 'primary' : ''" @click="setView('graph')">图谱</el-button>
+          <el-button :type="viewMode === 'ask' ? 'primary' : ''" @click="setView('ask')">问答</el-button>
         </el-button-group>
         <el-button :icon="Plus" @click="openCreatePage">新建页面</el-button>
         <el-button type="primary" :icon="Upload" @click="uploadVisible = true">上传资料</el-button>
@@ -103,8 +104,65 @@
         <div v-if="viewMode === 'graph'" class="graph-wrap">
           <div v-show="graphHasData" ref="graphRef" class="kb-graph"></div>
           <el-empty v-if="!graphHasData" description="还没有页面，无法生成图谱" :image-size="90" />
+          <div class="graph-mode" v-if="graphHasData">
+            <el-button size="small" :type="graphColorMode === 'type' ? 'primary' : ''" @click="setGraphMode('type')">按类型</el-button>
+            <el-button size="small" :type="graphColorMode === 'community' ? 'primary' : ''" @click="setGraphMode('community')">按社区</el-button>
+          </div>
           <div class="graph-tip" v-if="graphHasData">
             节点大小 = 被引用次数 · 点击节点查看页面 · 支持拖拽与缩放
+          </div>
+        </div>
+
+        <!-- Q&A over the wiki -->
+        <div v-else-if="viewMode === 'ask'" class="ask-wrap">
+          <el-scrollbar class="ask-scroll">
+            <div class="ask-inner">
+              <div class="ask-intro" v-if="!askResult && !asking">
+                <div class="ask-title">基于知识库提问</div>
+                <div class="ask-sub">回答只使用知识库里的页面，并标注来源；资料未覆盖的内容会明确说明。</div>
+                <div class="ask-samples" v-if="askSamples.length">
+                  <span v-for="s in askSamples" :key="s" class="ask-sample" @click="askQuestion(s)">{{ s }}</span>
+                </div>
+              </div>
+
+              <div class="ask-q" v-if="askQuestionText">Q：{{ askQuestionText }}</div>
+
+              <div class="ask-loading" v-if="asking">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span>正在检索知识库并组织答案…</span>
+              </div>
+
+              <template v-if="askResult">
+                <div class="markdown-body" v-html="renderAnswer" @click="onContentClick"></div>
+                <div class="backlinks" v-if="askResult.citations.length">
+                  <div class="bl-title">引用页面</div>
+                  <div class="bl-list">
+                    <span
+                      v-for="c in askResult.citations"
+                      :key="c.id"
+                      class="bl-chip"
+                      @click="openPageById(c.id)"
+                    >{{ c.title }}</span>
+                  </div>
+                </div>
+                <div class="ask-actions">
+                  <el-button size="small" :icon="Document" :loading="savingAnswer" @click="saveAnswer">
+                    存入知识库
+                  </el-button>
+                  <el-button size="small" link @click="askResult = null; askQuestionText = ''">重新提问</el-button>
+                </div>
+              </template>
+            </div>
+          </el-scrollbar>
+
+          <div class="ask-input">
+            <el-input
+              v-model="askInput"
+              placeholder="向知识库提问，例如：系统的权限模型是怎样的？"
+              :disabled="asking"
+              @keyup.enter="askQuestion()"
+            />
+            <el-button type="primary" :loading="asking" @click="askQuestion()">提问</el-button>
           </div>
         </div>
 
@@ -118,6 +176,12 @@
             </div>
             <div class="pt-actions">
               <span class="pt-meta">更新于 {{ fmtDate(activePage.updated_at) }}</span>
+              <el-button
+                v-if="!isReserved(activePage.slug)"
+                link
+                :icon="Clock"
+                @click="openVersions(activePage)"
+              >历史</el-button>
               <el-button
                 v-if="!isReserved(activePage.slug)"
                 link
@@ -312,6 +376,39 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- ── Version history ─────────────────────────────────────── -->
+    <el-drawer v-model="versionVisible" title="页面历史" size="600px">
+      <div v-if="!versions.length" class="side-empty">还没有历史版本</div>
+      <div v-else class="ver-box">
+        <div class="ver-list">
+          <div
+            v-for="v in versions"
+            :key="v.id"
+            class="ver-item"
+            :class="{ active: activeVersion?.id === v.id }"
+            @click="previewVersion(v)"
+          >
+            <div class="ver-head">
+              <span class="ver-no">v{{ v.version_no }}</span>
+              <el-tag size="small" effect="plain">{{ changeTypeText(v.change_type) }}</el-tag>
+              <span class="ver-time">{{ fmtDate(v.created_at) }}</span>
+            </div>
+            <div class="ver-title">{{ v.title }}</div>
+          </div>
+        </div>
+
+        <div class="ver-preview" v-if="activeVersion">
+          <div class="ver-preview-head">
+            <span>v{{ activeVersion.version_no }} 内容预览</span>
+            <el-button size="small" type="primary" @click="doRestore(activeVersion)">
+              回滚到此版本
+            </el-button>
+          </div>
+          <div class="markdown-body" v-html="renderVersionContent"></div>
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -328,11 +425,12 @@ import {
   listKBProjectsApi, getKBStructureApi, listKBSourcesApi, getKBPageApi,
   createKBPageApi, updateKBPageApi, deleteKBPageApi, uploadKBSourcesApi,
   deleteKBSourceApi, ingestKBSourceApi, listKBJobsApi, runKBLintApi,
-  getLatestKBLintApi, downloadKBSourceApi, exportKBWikiApi, getKBGraphApi
+  getLatestKBLintApi, downloadKBSourceApi, exportKBWikiApi, getKBGraphApi,
+  listKBPageVersionsApi, getKBVersionApi, restoreKBVersionApi, askKBApi
 } from '@/api/kb'
 import type {
   KBProjectSummary, KBStructure, KBSource, KBPageBrief, KBPageDetail,
-  KBLintReport, KBIngestJob
+  KBLintReport, KBIngestJob, KBPageVersionBrief, KBPageVersionDetail, KBAskResult
 } from '@/api/kb'
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -357,10 +455,24 @@ const uploadFileList = ref<any[]>([])
 const openGroups = ref<string[]>(['overview', 'topic'])
 
 // Graph view
-const viewMode = ref<'reader' | 'graph'>('reader')
+const viewMode = ref<'reader' | 'graph' | 'ask'>('reader')
 const graphRef = ref<HTMLElement>()
 const graphHasData = ref(false)
+const graphColorMode = ref<'type' | 'community'>('type')
 let graphChart: echarts.ECharts | null = null
+
+// Version history
+const versionVisible = ref(false)
+const versions = ref<KBPageVersionBrief[]>([])
+const activeVersion = ref<KBPageVersionDetail | null>(null)
+const versionPageId = ref<number | null>(null)
+
+// Knowledge-base Q&A
+const askInput = ref('')
+const askQuestionText = ref('')
+const askResult = ref<KBAskResult | null>(null)
+const asking = ref(false)
+const savingAnswer = ref(false)
 
 const editingId = ref<number | null>(null)
 const pageForm = reactive({ title: '', page_type: 'topic', summary: '', content: '' })
@@ -391,14 +503,23 @@ const runningJobs = computed(() =>
   jobs.value.filter((j) => j.status === 'running' || j.status === 'queued')
 )
 
-const renderedContent = computed(() => {
-  const raw = activePage.value?.content || ''
-  // Turn [[Page Title]] into an in-app link the click handler can intercept.
-  const withLinks = raw.replace(
+/** Render markdown, turning [[Page Title]] into an in-app link. */
+function renderMarkdown(src: string) {
+  const withLinks = (src || '').replace(
     /\[\[([^\[\]|]{1,120})(?:\|([^\[\]]{1,120}))?\]\]/g,
     (_m, target, label) => `[${label || target}](#wiki:${encodeURIComponent(String(target).trim())})`
   )
   return md.render(withLinks)
+}
+
+const renderedContent = computed(() => renderMarkdown(activePage.value?.content || ''))
+const renderAnswer = computed(() => renderMarkdown(askResult.value?.answer || ''))
+const renderVersionContent = computed(() => renderMarkdown(activeVersion.value?.content || ''))
+
+/** Question suggestions derived from the project's own pages. */
+const askSamples = computed(() => {
+  const pages = nonEmptyGroups.value.flatMap((g) => g.pages).slice(0, 4)
+  return pages.map((p) => `${p.title} 讲了什么？`)
 })
 
 // ─── formatting helpers ──────────────────────────────────────────────────────
@@ -450,7 +571,12 @@ const GRAPH_COLORS: Record<string, string> = {
   index: '#cfd3d8', log: '#cfd3d8'
 }
 
-async function setView(v: 'reader' | 'graph') {
+const COMMUNITY_COLORS = [
+  '#409eff', '#36b37e', '#e6a23c', '#f56c6c', '#b39ddb',
+  '#13c2c2', '#fa8c16', '#722ed1', '#52c41a', '#eb2f96'
+]
+
+async function setView(v: 'reader' | 'graph' | 'ask') {
   viewMode.value = v
   if (v === 'graph') {
     await nextTick()
@@ -458,11 +584,17 @@ async function setView(v: 'reader' | 'graph') {
   }
 }
 
+async function setGraphMode(mode: 'type' | 'community') {
+  graphColorMode.value = mode
+  await renderGraph()
+}
+
 async function renderGraph() {
   if (!currentProjectId.value) return
   const res = await getKBGraphApi(currentProjectId.value)
   const nodes: any[] = res.data?.nodes || []
   const edges: any[] = res.data?.edges || []
+  const communities: any[] = res.data?.communities || []
   graphHasData.value = nodes.length > 0
   await nextTick()
 
@@ -474,17 +606,33 @@ async function renderGraph() {
 
   if (!graphChart) graphChart = echarts.init(graphRef.value)
 
-  const cats = Array.from(new Set(nodes.map((n) => n.type)))
-  const catIndex = new Map(cats.map((c, i) => [c, i]))
+  const byCommunity = graphColorMode.value === 'community' && communities.length > 0
+
+  // Category 0..n-1 must line up with the node's `category` index.
+  const cats: string[] = byCommunity
+    ? communities.map((c: any) => `簇${c.id + 1}·${c.label}`)
+    : Array.from(new Set(nodes.map((n) => n.type)))
+  const catIndex = byCommunity
+    ? new Map(communities.map((c: any) => [c.id, c.id]))
+    : new Map(cats.map((c, i) => [c, i]))
+
+  const catColor = (i: number) => (byCommunity
+    ? COMMUNITY_COLORS[i % COMMUNITY_COLORS.length]
+    : (GRAPH_COLORS[cats[i]] || '#909399'))
 
   graphChart.setOption({
     tooltip: {
-      formatter: (p: any) => (p.dataType === 'node'
-        ? `<b>${p.data.name}</b><br/>类型：${typeLabel(p.data.rawType)}<br/>被引用：${p.data.value} 次`
-        : '')
+      formatter: (p: any) => {
+        if (p.dataType !== 'node') return ''
+        const comm = byCommunity && communities[p.data.comm]
+          ? `<br/>社区：${communities[p.data.comm].label}`
+          : ''
+        return `<b>${p.data.name}</b><br/>类型：${typeLabel(p.data.rawType)}`
+          + `<br/>被引用：${p.data.value} 次${comm}`
+      }
     },
     legend: [{
-      data: cats.map((c) => typeLabel(c)),
+      data: cats,
       bottom: 8, icon: 'circle', itemWidth: 8, itemHeight: 8,
       textStyle: { fontSize: 11 }
     }],
@@ -497,16 +645,17 @@ async function renderGraph() {
       label: { show: true, position: 'right', fontSize: 11, color: '#4a5568', formatter: '{b}' },
       lineStyle: { color: 'source', curveness: 0.12, opacity: 0.45, width: 1 },
       emphasis: { focus: 'adjacency', lineStyle: { width: 2, opacity: 0.9 } },
-      categories: cats.map((c) => ({
-        name: typeLabel(c),
-        itemStyle: { color: GRAPH_COLORS[c] || '#909399' }
+      categories: cats.map((name, i) => ({
+        name,
+        itemStyle: { color: catColor(i) }
       })),
       data: nodes.map((n) => ({
         id: String(n.id),
         name: n.title,
         rawType: n.type,
+        comm: n.community ?? 0,
         value: n.inbound || 0,
-        category: catIndex.get(n.type),
+        category: byCommunity ? (catIndex.get(n.community ?? 0) ?? 0) : catIndex.get(n.type),
         symbolSize: n.reserved ? 10 : Math.min(40, 13 + (n.inbound || 0) * 2.5)
       })),
       edges: edges.map((e) => ({ source: String(e.source), target: String(e.target) }))
@@ -723,6 +872,82 @@ async function runLint(silent: boolean) {
     await loadProjects()
   } finally {
     linting.value = false
+  }
+}
+
+// ─── version history ─────────────────────────────────────────────────────────
+function changeTypeText(t: string) {
+  return ({ create: '创建', update: 'AI 更新', manual: '手动编辑', restore: '回滚' } as any)[t] || t
+}
+
+async function openVersions(p: KBPageDetail) {
+  versionPageId.value = p.id
+  versionVisible.value = true
+  activeVersion.value = null
+  const res = await listKBPageVersionsApi(p.id)
+  versions.value = res.data || []
+  if (versions.value.length) await previewVersion(versions.value[0])
+}
+
+async function previewVersion(v: KBPageVersionBrief) {
+  const res = await getKBVersionApi(v.id)
+  activeVersion.value = res.data
+}
+
+async function doRestore(v: KBPageVersionDetail) {
+  await ElMessageBox.confirm(
+    `确定回滚到 v${v.version_no}？当前内容会先保存为一个新版本，可再次回滚。`,
+    '回滚确认',
+    { type: 'warning' }
+  )
+  await restoreKBVersionApi(v.id)
+  ElMessage.success(`已回滚到 v${v.version_no}`)
+  versionVisible.value = false
+  await reloadStructure()
+  if (versionPageId.value) await openPageById(versionPageId.value)
+}
+
+// ─── knowledge-base Q&A ──────────────────────────────────────────────────────
+async function askQuestion(preset?: string) {
+  const q = (preset || askInput.value || '').trim()
+  if (!q) {
+    ElMessage.warning('请输入问题')
+    return
+  }
+  if (!currentProjectId.value) return
+
+  askInput.value = q
+  askQuestionText.value = q
+  askResult.value = null
+  asking.value = true
+  try {
+    const res = await askKBApi(currentProjectId.value, { question: q })
+    askResult.value = res.data
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '提问失败，请稍后重试')
+  } finally {
+    asking.value = false
+  }
+}
+
+async function saveAnswer() {
+  if (!askResult.value || !currentProjectId.value || !askQuestionText.value) return
+  savingAnswer.value = true
+  try {
+    const refs = askResult.value.citations.map((c) => `- [[${c.title}]]`).join('\n')
+    const content = askResult.value.answer + (refs ? `\n\n## 参考页面\n${refs}` : '')
+    const res = await createKBPageApi(currentProjectId.value, {
+      title: `问答：${askQuestionText.value.slice(0, 40)}`,
+      page_type: 'topic',
+      summary: askQuestionText.value.slice(0, 200),
+      content
+    })
+    ElMessage.success(`已存入知识库：${res.data.title}`)
+    await reloadStructure()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    savingAnswer.value = false
   }
 }
 
@@ -1103,4 +1328,67 @@ onBeforeUnmount(() => {
 }
 .issue-detail { font-size: 13px; color: var(--text-regular); line-height: 1.6; }
 .issue-sug { font-size: 12px; color: var(--text-muted); margin-top: 5px; line-height: 1.6; }
+
+/* Graph colour-mode toggle */
+.graph-mode {
+  position: absolute; top: 12px; right: 12px;
+  display: flex; gap: 6px;
+  background: rgba(255, 255, 255, .92);
+  padding: 4px; border-radius: 8px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .07);
+}
+
+/* Knowledge-base Q&A */
+.ask-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.ask-scroll { flex: 1; min-height: 0; }
+.ask-inner { padding: 26px 30px 20px; max-width: 880px; }
+.ask-intro { text-align: center; padding: 44px 0 10px; }
+.ask-title { font-size: 18px; font-weight: 600; color: var(--text-main); }
+.ask-sub { font-size: 13px; color: var(--text-muted); margin-top: 8px; line-height: 1.7; }
+.ask-samples { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 20px; }
+.ask-sample {
+  font-size: 12.5px; padding: 6px 14px; border-radius: 999px;
+  background: rgba(64, 158, 255, .08); color: #2b6fd4; cursor: pointer;
+  &:hover { background: rgba(64, 158, 255, .16); }
+}
+.ask-q {
+  font-size: 14px; font-weight: 600; color: var(--text-main);
+  padding: 12px 16px; background: rgba(0, 0, 0, .03); border-radius: 8px;
+  margin-bottom: 18px;
+}
+.ask-loading {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-muted); padding: 16px 0;
+}
+.ask-actions { display: flex; align-items: center; gap: 10px; margin-top: 22px; }
+.ask-input {
+  display: flex; gap: 10px; padding: 14px 22px;
+  border-top: 1px solid var(--border-color); flex-shrink: 0;
+}
+
+/* Version history */
+.ver-box { display: flex; flex-direction: column; gap: 14px; }
+.ver-list {
+  max-height: 240px; overflow-y: auto;
+  border: 1px solid var(--border-color); border-radius: 8px;
+}
+.ver-item {
+  padding: 9px 12px; cursor: pointer;
+  border-bottom: 1px solid var(--border-color);
+  &:last-child { border-bottom: none; }
+  &:hover { background: rgba(0, 0, 0, .025); }
+  &.active { background: rgba(64, 158, 255, .09); }
+}
+.ver-head { display: flex; align-items: center; gap: 8px; }
+.ver-no { font-size: 12px; font-weight: 700; color: #2b6fd4; }
+.ver-time { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+.ver-title {
+  font-size: 12.5px; color: var(--text-regular); margin-top: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ver-preview { border-top: 1px dashed var(--border-color); padding-top: 12px; }
+.ver-preview-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; color: var(--text-muted); margin-bottom: 10px;
+}
 </style>

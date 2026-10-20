@@ -103,6 +103,64 @@ export interface KBStructure {
   total_pages: number
 }
 
+export interface KBGraphNode {
+  id: number
+  title: string
+  type: string
+  inbound: number
+  community?: number
+  reserved: boolean
+}
+
+export interface KBGraphEdge {
+  source: number
+  target: number
+}
+
+export interface KBCommunity {
+  id: number
+  label: string
+  size: number
+  pages: number[]
+}
+
+export interface KBGraph {
+  nodes: KBGraphNode[]
+  edges: KBGraphEdge[]
+  communities?: KBCommunity[]
+}
+
+export interface KBPageVersionBrief {
+  id: number
+  page_id: number
+  version_no: number
+  title: string
+  change_type: string
+  source_id?: number | null
+  created_at: string
+}
+
+export interface KBPageVersionDetail extends KBPageVersionBrief {
+  summary?: string | null
+  content?: string | null
+  tags?: string | null
+  page_type?: string | null
+}
+
+export interface KBAskCitation {
+  id: number
+  title: string
+  page_type: string
+}
+
+export interface KBAskResult {
+  answer: string
+  citations: KBAskCitation[]
+  used_llm: boolean
+  saved_page_id?: number | null
+  saved_page_title?: string | null
+}
+
 // ─── API ──────────────────────────────────────────────────────────────────────
 
 export function listKBProjectsApi() {
@@ -114,7 +172,7 @@ export function getKBStructureApi(projectId: number) {
 }
 
 export function getKBGraphApi(projectId: number) {
-  return request<any>({ url: `/kb/projects/${projectId}/graph`, method: 'GET' })
+  return request<KBGraph>({ url: `/kb/projects/${projectId}/graph`, method: 'GET' })
 }
 
 export function listKBPagesApi(projectId: number, params?: any) {
@@ -201,4 +259,42 @@ export async function exportKBWikiApi(projectId: number): Promise<Blob> {
     timeout: 120000
   })
   return res.data as Blob
+}
+
+// ─── page versions ────────────────────────────────────────────────────────────
+
+export function listKBPageVersionsApi(pageId: number) {
+  return request<KBPageVersionBrief[]>({
+    url: `/kb/pages/${pageId}/versions`,
+    method: 'GET'
+  })
+}
+
+export function getKBVersionApi(versionId: number) {
+  return request<KBPageVersionDetail>({
+    url: `/kb/versions/${versionId}`,
+    method: 'GET'
+  })
+}
+
+export function restoreKBVersionApi(versionId: number) {
+  return request<KBPageBrief>({
+    url: `/kb/versions/${versionId}/restore`,
+    method: 'POST',
+    timeout: 60000
+  })
+}
+
+// ─── knowledge-base Q&A ───────────────────────────────────────────────────────
+
+export function askKBApi(
+  projectId: number,
+  payload: { question: string; save_as_page?: boolean; page_type?: string }
+) {
+  return request<KBAskResult>({
+    url: `/kb/projects/${projectId}/ask`,
+    method: 'POST',
+    data: payload,
+    timeout: 240000
+  })
 }

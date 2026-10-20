@@ -136,3 +136,29 @@ class KBLintReport(Base):
     stats_json = Column(LongText, nullable=True)    # JSON object
     created_by = Column(Integer, ForeignKey("sys_users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class KBPageVersion(Base):
+    """Immutable snapshot of a wiki page, taken whenever its content changes."""
+
+    __tablename__ = "pm_kb_page_versions"
+    __table_args__ = (
+        Index("ix_kb_version_page", "page_id", "version_no"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    page_id = Column(Integer, ForeignKey("pm_kb_pages.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    version_no = Column(Integer, default=1)
+    title = Column(String(255), nullable=False)
+    summary = Column(Text, nullable=True)
+    content = Column(LongText, nullable=True)
+    tags = Column(String(255), nullable=True)
+    page_type = Column(String(32), nullable=True)
+
+    # create | update | manual | restore
+    change_type = Column(String(16), default="update")
+    source_id = Column(Integer, nullable=True)
+    created_by = Column(Integer, ForeignKey("sys_users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

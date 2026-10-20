@@ -91,3 +91,40 @@ class KBProjectSummary(BaseModel):
     links: int = 0
     last_updated: Optional[datetime] = None
     health_score: Optional[int] = None
+
+
+class KBPageVersionBrief(BaseModel):
+    id: int
+    page_id: int
+    version_no: int
+    title: str
+    change_type: str
+    source_id: Optional[int] = None
+    created_at: datetime
+
+
+class KBPageVersionOut(KBPageVersionBrief):
+    summary: Optional[str] = None
+    content: Optional[str] = None
+    tags: Optional[str] = None
+    page_type: Optional[str] = None
+
+
+class KBAskRequest(BaseModel):
+    question: str
+    save_as_page: bool = False
+    page_type: str = "topic"
+
+
+class KBAskCitation(BaseModel):
+    id: int
+    title: str
+    page_type: str
+
+
+class KBAskResponse(BaseModel):
+    answer: str
+    citations: List[KBAskCitation] = []
+    used_llm: bool = False
+    saved_page_id: Optional[int] = None
+    saved_page_title: Optional[str] = None

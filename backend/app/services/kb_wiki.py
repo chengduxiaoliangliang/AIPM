@@ -24,7 +24,9 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.ai.llm_factory import get_llm, is_llm_configured
-from app.models.kb import KBIngestJob, KBLink, KBLintReport, KBPage, KBSource
+from app.models.kb import (
+    KBIngestJob, KBLink, KBLintReport, KBPage, KBPageVersion, KBSource,
+)
 from app.models.project import Project
 from app.redis_client import redis_client
 
@@ -304,8 +306,103 @@ def _upsert_page(db: Session, project_id: int, slug: str, **fields) -> tuple[KBP
     return page, False
 
 
-# ─── per-project ingest lock ─────────────────────────────────────────────────
+def detect_communities(
+    node_ids: List[int],
+    edges: List[tuple],
+    rounds: int = 12,
+    seed: int = 42,
+) -> Dict[int, int]:
+    """Label-propagation community detection.
 
+    Cheap and dependency-free, and good enough to surface "these pages belong
+    together" clusters in a wiki of a few hundred pages. The seed keeps the
+    result stable across requests so the UI doesn't reshuffle colours.
+    """
+    import random
+
+    adj: Dict[int, List[int]] = {n: [] for n in node_ids}
+    for s, t in edges:
+        if s in adj and t in adj:
+            adj[s].append(t)
+            adj[t].append(s)
+
+    labels = {n: n for n in node_ids}
+    rng = random.Random(seed)
+    order = list(node_ids)
+
+    for _ in range(rounds):
+        changed = False
+        rng.shuffle(order)
+        for n in order:
+            nbrs = adj[n]
+            if not nbrs:
+                continue
+            counts: Dict[int, int] = {}
+            for nb in nbrs:
+                counts[labels[nb]] = counts.get(labels[nb], 0) + 1
+            best = max(counts.items(), key=lambda kv: (kv[1], -kv[0]))[0]
+            if labels[n] != best:
+                labels[n] = best
+                changed = True
+        if not changed:
+            break
+
+    groups: Dict[int, List[int]] = {}
+    for n, lbl in labels.items():
+        groups.setdefault(lbl, []).append(n)
+
+    # Renumber by size so community 0 is always the biggest cluster.
+    ordered = sorted(groups.values(), key=len, reverse=True)
+    result: Dict[int, int] = {}
+    for idx, members in enumerate(ordered):
+        for m in members:
+            result[m] = idx
+    return result
+
+
+def snapshot_page(
+    db: Session,
+    page: KBPage,
+    change_type: str = "update",
+    source_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+) -> Optional[KBPageVersion]:
+    """Record the page's current state as a new version.
+
+    Skipped for system pages (index/log) and when nothing actually changed, so
+    the history stays meaningful instead of filling up with duplicates.
+    """
+    if page.slug in RESERVED_SLUGS:
+        return None
+
+    last = (
+        db.query(KBPageVersion)
+        .filter(KBPageVersion.page_id == page.id)
+        .order_by(KBPageVersion.version_no.desc())
+        .first()
+    )
+    if last and (last.content or "") == (page.content or "") and last.title == page.title:
+        return None
+
+    ver = KBPageVersion(
+        page_id=page.id,
+        project_id=page.project_id,
+        version_no=(last.version_no + 1) if last else 1,
+        title=page.title,
+        summary=page.summary,
+        content=page.content,
+        tags=page.tags,
+        page_type=page.page_type,
+        change_type=change_type,
+        source_id=source_id,
+        created_by=user_id,
+    )
+    db.add(ver)
+    db.flush()
+    return ver
+
+
+# ─── per-project ingest lock ─────────────────────────────────────────────────
 _LOCK_PREFIX = "aipm:kb:ingest_lock:"
 
 
@@ -593,6 +690,13 @@ async def ingest_source(
                         ids = set()
                     ids.add(source_id)
                     page.source_ids = json.dumps(sorted(ids), ensure_ascii=False)
+
+                snapshot_page(
+                    db, page,
+                    "create" if was_created else "update",
+                    source_id=source_id,
+                    user_id=user_id,
+                )
             db.flush()
 
         link_count = rebuild_links(db, project_id)
@@ -796,3 +900,157 @@ async def lint_project(
     )
     db.commit()
     return report
+
+
+# ─── knowledge-base Q&A ──────────────────────────────────────────────────────
+
+ASK_SELECT_PROMPT = """你是知识库检索器。给定用户问题和页面目录，选出最相关的页面标题。
+
+只输出 JSON：{{"pages": ["标题1", "标题2"]}}
+- 最多 {limit} 个，按相关度降序
+- 标题必须与目录中的完全一致
+- 若没有任何页面相关，返回 {{"pages": []}}
+- 不要输出任何解释文字"""
+
+ASK_ANSWER_PROMPT = """你是项目知识库助手。请仅依据下面提供的页面内容回答问题。
+
+【规则】
+1. 只能使用给定页面的信息，不得编造。信息不足时明确说明「知识库中未涵盖」。
+2. 每个关键结论后标注来源，格式为：[页面标题]
+3. 用 Markdown 排版，简洁、有条理、有信息密度。
+4. 如果多个页面存在冲突说法，要指出分歧。
+
+【问题】
+{question}
+
+【页面内容】
+{pages}
+
+请直接输出答案，不要复述这些规则。"""
+
+
+async def _llm_text(system: str, user: str, timeout: float = 180.0) -> Optional[str]:
+    """Plain-text LLM call (no JSON parsing)."""
+    if not (is_llm_configured() and settings.AI_ENABLED):
+        return None
+    try:
+        llm = get_llm(streaming=False)
+        if llm is None:
+            return None
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        resp = await asyncio.wait_for(
+            llm.ainvoke([SystemMessage(content=system), HumanMessage(content=user)]),
+            timeout=timeout,
+        )
+        raw = resp.content if hasattr(resp, "content") else str(resp)
+        return (raw or "").strip() or None
+    except Exception as exc:
+        logger.warning("LLM text call failed: %s", exc)
+        return None
+
+
+def _query_tokens(question: str) -> List[str]:
+    """Tokenise a question for cheap lexical pre-filtering (CJK bigrams + words)."""
+    q = (question or "").lower()
+    toks = set(re.findall(r"[a-z]{2,}", q))
+    for run in re.findall(r"[\u4e00-\u9fff]+", q):
+        if len(run) <= 4:
+            toks.add(run)
+        for i in range(len(run) - 1):
+            toks.add(run[i:i + 2])
+    return [t for t in toks if t]
+
+
+def _keyword_candidates(db: Session, project_id: int, question: str, limit: int = 12) -> List[KBPage]:
+    pages = (
+        db.query(KBPage)
+        .filter(KBPage.project_id == project_id, KBPage.slug.notin_(RESERVED_SLUGS))
+        .all()
+    )
+    if not pages:
+        return []
+
+    tokens = _query_tokens(question)
+    scored: List[tuple] = []
+    for p in pages:
+        title = (p.title or "").lower()
+        summary = (p.summary or "").lower()
+        body = (p.content or "")[:4000].lower()
+        score = 0
+        for t in tokens:
+            if t in title:
+                score += 6
+            elif t in summary:
+                score += 3
+            elif t in body:
+                score += 1
+        scored.append((score, p))
+
+    scored.sort(key=lambda x: (-x[0], -(x[1].updated_at.timestamp() if x[1].updated_at else 0)))
+    return [p for s, p in scored[:limit]]
+
+
+async def answer_question(
+    db: Session,
+    project: Project,
+    question: str,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Answer a question from the wiki, with citations."""
+    candidates = _keyword_candidates(db, project.id, question)
+    if not candidates:
+        return {
+            "answer": "知识库中还没有可用的页面，无法回答。请先上传资料并完成摄入。",
+            "citations": [], "used_llm": False,
+        }
+
+    # Step 1 — let the model pick the relevant pages from a compact catalog.
+    selected: Optional[List[KBPage]] = None
+    if is_llm_configured() and settings.AI_ENABLED:
+        catalog = "\n".join(
+            f"- {p.title}：{(p.summary or '')[:80]}" for p in candidates
+        )
+        picked = await _llm_json(
+            WIKI_SCHEMA,
+            ASK_SELECT_PROMPT.format(limit=6) + f"\n\n【页面目录】\n{catalog}\n\n【问题】\n{question}",
+        )
+        if picked and isinstance(picked.get("pages"), list):
+            wanted = {str(t).strip().lower() for t in picked["pages"]}
+            chosen = [p for p in candidates if p.title.strip().lower() in wanted]
+            if chosen:
+                selected = chosen
+    if selected is None:
+        selected = candidates[:4]
+
+    # Step 2 — answer strictly from those pages.
+    body = "\n\n".join(
+        f"### {p.title}\n{(p.content or '')[:3000]}" for p in selected[:5]
+    )
+    answer = await _llm_text(
+        WIKI_SCHEMA,
+        ASK_ANSWER_PROMPT.format(question=question, pages=body),
+    )
+
+    used_llm = answer is not None
+    if not used_llm:
+        answer = (
+            "> ⚠️ 大模型暂不可用，以下是与问题最相关的页面，请直接查阅：\n\n"
+            + "\n".join(
+                f"- **{p.title}** — {(p.summary or (p.content or '')[:100]).strip()}"
+                for p in selected
+            )
+        )
+
+    # Cite the pages the answer actually references; fall back to all of them.
+    cited = [p for p in selected if p.title and p.title in (answer or "")]
+    if not cited:
+        cited = selected[:3]
+
+    return {
+        "answer": answer,
+        "citations": [
+            {"id": p.id, "title": p.title, "page_type": p.page_type} for p in cited
+        ],
+        "used_llm": used_llm,
+    }
