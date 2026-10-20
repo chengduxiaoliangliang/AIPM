@@ -367,8 +367,12 @@
             </el-form-item>
           </el-col>
           <el-col :span="14" v-if="pageForm.visibility === 'restricted'">
-            <el-form-item label="允许的角色（逗号分隔）">
-              <el-input v-model="pageForm.allowed_roles" placeholder="例如 PM,DEV" />
+            <el-form-item label="允许的角色">
+              <el-checkbox-group v-model="allowedRoleArray" class="role-checks">
+                <el-checkbox v-for="r in roles" :key="r.code" :value="r.code">
+                  {{ r.name }}
+                </el-checkbox>
+              </el-checkbox-group>
             </el-form-item>
           </el-col>
         </el-row>
@@ -428,7 +432,10 @@
           <div>摄入完成通知：{{ notifyStatus.on_ingest ? '开启' : '关闭' }}</div>
           <div>健康分低于 {{ notifyStatus.lint_threshold }} 时自动告警</div>
         </div>
-        <el-button size="small" :loading="testingEmail" @click="testEmail">发送测试邮件</el-button>
+        <div class="nb-actions">
+          <el-button size="small" :loading="testingEmail" @click="testEmail">发送测试邮件</el-button>
+          <el-button size="small" link @click="openPrefs">通知设置</el-button>
+        </div>
       </div>
     </el-drawer>
 
@@ -464,6 +471,34 @@
         </div>
       </div>
     </el-drawer>
+    <!-- ── Notification subscription ───────────────────────────── -->
+    <el-dialog v-model="prefVisible" title="通知订阅设置" width="440px">
+      <div class="pref-row">
+        <div class="pref-text">
+          <div class="pref-label">接收知识库邮件通知</div>
+          <div class="pref-desc">{{ notifyStatus?.email || '当前账号未配置邮箱' }}</div>
+        </div>
+        <el-switch v-model="prefForm.enabled" />
+      </div>
+      <div class="pref-row" :class="{ muted: !prefForm.enabled }">
+        <div class="pref-text">
+          <div class="pref-label">资料摄入完成 / 失败</div>
+          <div class="pref-desc">上传的资料整理完成或失败时通知</div>
+        </div>
+        <el-switch v-model="prefForm.on_ingest" :disabled="!prefForm.enabled" />
+      </div>
+      <div class="pref-row" :class="{ muted: !prefForm.enabled }">
+        <div class="pref-text">
+          <div class="pref-label">体检告警</div>
+          <div class="pref-desc">自动体检健康分低于阈值时通知</div>
+        </div>
+        <el-switch v-model="prefForm.on_lint" :disabled="!prefForm.enabled" />
+      </div>
+      <template #footer>
+        <el-button @click="prefVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingPref" @click="savePrefs">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -472,6 +507,8 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'v
 import MarkdownIt from 'markdown-it'
 import * as echarts from 'echarts'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { listRolesApi } from '@/api/user'
+import type { Role } from '@/types'
 import {
   Plus, Upload, Download, Refresh, Edit, Delete, DataAnalysis, MagicStick,
   Document, Files, Clock, ArrowRight, Loading, UploadFilled, Lock
@@ -483,7 +520,8 @@ import {
   getLatestKBLintApi, downloadKBSourceApi, exportKBWikiApi, getKBGraphApi,
   listKBPageVersionsApi, getKBVersionApi, restoreKBVersionApi,
   streamAskKBApi, getKBStructureAllApi, getKBGraphAllApi, runKBLintAllApi,
-  getKBNotifyStatusApi, sendKBNotifyTestApi
+  getKBNotifyStatusApi, sendKBNotifyTestApi, getKBNotifyPrefsApi,
+  updateKBNotifyPrefsApi
 } from '@/api/kb'
 import type {
   KBProjectSummary, KBStructure, KBSource, KBPageBrief, KBPageDetail,
@@ -536,6 +574,16 @@ const savingAnswer = ref(false)
 // Email notifications
 const notifyStatus = ref<KBNotifyStatus | null>(null)
 const testingEmail = ref(false)
+const prefVisible = ref(false)
+const savingPref = ref(false)
+const prefForm = reactive({ enabled: true, on_ingest: true, on_lint: true })
+
+// Role options for page-level access control
+const roles = ref<Role[]>([])
+const allowedRoleArray = computed<string[]>({
+  get: () => (pageForm.allowed_roles || '').split(',').map((s) => s.trim()).filter(Boolean),
+  set: (v) => { pageForm.allowed_roles = v.join(',') }
+})
 
 const editingId = ref<number | null>(null)
 const pageForm = reactive({
@@ -1069,6 +1117,15 @@ async function saveAnswer() {
   }
 }
 
+async function loadRoles() {
+  try {
+    const res = await listRolesApi()
+    roles.value = (res.data || []).filter((r) => r.status)
+  } catch {
+    roles.value = []
+  }
+}
+
 // ─── email notifications ────────────────────────────────────────────────────
 async function loadNotifyStatus() {
   try {
@@ -1076,6 +1133,33 @@ async function loadNotifyStatus() {
     notifyStatus.value = res.data
   } catch {
     notifyStatus.value = null
+  }
+}
+
+async function openPrefs() {
+  prefVisible.value = true
+  try {
+    const res = await getKBNotifyPrefsApi()
+    Object.assign(prefForm, {
+      enabled: res.data.enabled,
+      on_ingest: res.data.on_ingest,
+      on_lint: res.data.on_lint
+    })
+  } catch {
+    /* keep current values */
+  }
+}
+
+async function savePrefs() {
+  savingPref.value = true
+  try {
+    await updateKBNotifyPrefsApi({ ...prefForm })
+    ElMessage.success('订阅设置已保存')
+    prefVisible.value = false
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败')
+  } finally {
+    savingPref.value = false
   }
 }
 
@@ -1176,6 +1260,7 @@ function saveBlob(blob: Blob, filename: string) {
 onMounted(async () => {
   window.addEventListener('resize', onResize)
   loadNotifyStatus()
+  loadRoles()
   await loadProjects()
   if (currentProjectId.value) {
     await Promise.all([loadStructure(), loadSources(), loadLint(), loadJobs()])
@@ -1565,6 +1650,10 @@ onBeforeUnmount(() => {
 .page-lock {
   font-size: 11px; color: #d48806; flex-shrink: 0;
 }
+.role-checks {
+  display: flex; flex-wrap: wrap; gap: 2px 14px;
+  :deep(.el-checkbox) { margin-right: 0; }
+}
 
 /* Email notification block (inside lint drawer) */
 .notify-box {
@@ -1580,4 +1669,17 @@ onBeforeUnmount(() => {
   font-size: 12px; color: var(--text-muted); line-height: 1.9;
   margin-bottom: 10px;
 }
+.nb-actions { display: flex; align-items: center; gap: 10px; }
+
+/* Notification subscription rows */
+.pref-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; padding: 12px 0;
+  border-bottom: 1px solid var(--border-color);
+  &:last-of-type { border-bottom: none; }
+  &.muted { opacity: .45; }
+}
+.pref-text { min-width: 0; }
+.pref-label { font-size: 13px; color: var(--text-main); font-weight: 500; }
+.pref-desc { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
 </style>

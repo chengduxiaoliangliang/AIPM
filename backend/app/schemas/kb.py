@@ -135,3 +135,13 @@ class KBAskResponse(BaseModel):
     used_llm: bool = False
     saved_page_id: Optional[int] = None
     saved_page_title: Optional[str] = None
+
+
+class KBNotifyPrefIn(BaseModel):
+    enabled: bool = True
+    on_ingest: bool = True
+    on_lint: bool = True
+
+
+class KBNotifyPrefOut(KBNotifyPrefIn):
+    email: Optional[str] = None

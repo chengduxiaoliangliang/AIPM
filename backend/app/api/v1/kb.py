@@ -42,14 +42,18 @@ from app.api.deps import get_current_user
 from app.config import settings
 from app.core.exceptions import ForbiddenException, NotFoundException
 from app.database import get_db
-from app.models.kb import KBIngestJob, KBLink, KBLintReport, KBPage, KBPageVersion, KBSource
+from app.models.kb import (
+    KBIngestJob, KBLink, KBLintReport, KBNotifyPref, KBPage, KBPageVersion,
+    KBSource,
+)
 from app.models.project import Project
 from app.models.user import User
 from app.schemas.common import ResponseModel
 from app.schemas.kb import (
     KBAskCitation, KBAskRequest, KBAskResponse,
-    KBIngestJobOut, KBLintOut, KBPageBrief, KBPageOut, KBPageUpsert,
-    KBPageVersionBrief, KBPageVersionOut, KBProjectSummary, KBSourceOut,
+    KBIngestJobOut, KBLintOut, KBNotifyPrefIn, KBNotifyPrefOut, KBPageBrief,
+    KBPageOut, KBPageUpsert, KBPageVersionBrief, KBPageVersionOut,
+    KBProjectSummary, KBSourceOut,
 )
 from app.services import kb_extract, kb_queue, kb_wiki
 
@@ -748,12 +752,51 @@ def notify_status(
     return ResponseModel(code=200, message="success", data={
         "enabled": settings.KB_NOTIFY_ENABLED,
         "configured": notifier.is_email_configured(),
+        "email": current_user.email,
         "smtp_host": settings.SMTP_HOST or None,
         "smtp_port": settings.SMTP_PORT,
         "from": settings.SMTP_FROM or settings.SMTP_USER or None,
         "on_ingest": settings.KB_NOTIFY_ON_INGEST,
         "lint_threshold": settings.KB_NOTIFY_LINT_SCORE_BELOW,
     })
+
+
+@router.get("/notify/prefs", response_model=ResponseModel[KBNotifyPrefOut])
+def get_notify_prefs(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Current user's subscription. A missing row means "everything on"."""
+    pref = db.query(KBNotifyPref).filter(KBNotifyPref.user_id == current_user.id).first()
+    if pref is None:
+        return ResponseModel(code=200, message="success", data=KBNotifyPrefOut(
+            enabled=True, on_ingest=True, on_lint=True, email=current_user.email,
+        ))
+    return ResponseModel(code=200, message="success", data=KBNotifyPrefOut(
+        enabled=bool(pref.enabled), on_ingest=bool(pref.on_ingest),
+        on_lint=bool(pref.on_lint), email=current_user.email,
+    ))
+
+
+@router.put("/notify/prefs", response_model=ResponseModel[KBNotifyPrefOut])
+def update_notify_prefs(
+    payload: KBNotifyPrefIn,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    pref = db.query(KBNotifyPref).filter(KBNotifyPref.user_id == current_user.id).first()
+    if pref is None:
+        pref = KBNotifyPref(user_id=current_user.id)
+        db.add(pref)
+    pref.enabled = payload.enabled
+    pref.on_ingest = payload.on_ingest
+    pref.on_lint = payload.on_lint
+    db.commit()
+    db.refresh(pref)
+    return ResponseModel(code=200, message="已保存", data=KBNotifyPrefOut(
+        enabled=bool(pref.enabled), on_ingest=bool(pref.on_ingest),
+        on_lint=bool(pref.on_lint), email=current_user.email,
+    ))
 
 
 @router.post("/notify/test", response_model=ResponseModel[Dict[str, Any]])

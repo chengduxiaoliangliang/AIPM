@@ -107,15 +107,20 @@ def _wrap(title: str, rows: Sequence[tuple], footer: str = "") -> str:
 
 # ─── recipients ──────────────────────────────────────────────────────────────
 
-def project_recipients(db: Session, project_id: int) -> List[str]:
-    """Project members plus system administrators."""
+def project_recipients(db: Session, project_id: int, event: str = "ingest") -> List[str]:
+    """Project members plus system administrators, minus anyone who opted out.
+
+    A missing preference row means "subscribed to everything", so only users who
+    actively changed their settings need a row.
+    """
+    from app.models.kb import KBNotifyPref
     from app.models.project import ProjectMember
     from app.models.user import Role, User, user_role_table
 
-    emails = set()
+    candidates: dict = {}
 
     members = (
-        db.query(User.email)
+        db.query(User.id, User.email)
         .join(ProjectMember, ProjectMember.user_id == User.id)
         .filter(
             ProjectMember.project_id == project_id,
@@ -124,18 +129,39 @@ def project_recipients(db: Session, project_id: int) -> List[str]:
         )
         .all()
     )
-    emails.update(m[0] for m in members if m[0])
+    candidates.update({uid: email for uid, email in members if email})
 
     admins = (
-        db.query(User.email)
+        db.query(User.id, User.email)
         .join(user_role_table, user_role_table.c.user_id == User.id)
         .join(Role, Role.id == user_role_table.c.role_id)
         .filter(Role.code == "ADMIN", User.status.is_(True), User.email.isnot(None))
         .all()
     )
-    emails.update(a[0] for a in admins if a[0])
+    candidates.update({uid: email for uid, email in admins if email})
 
-    return sorted(emails)
+    if not candidates:
+        return []
+
+    prefs = {
+        p.user_id: p
+        for p in db.query(KBNotifyPref)
+        .filter(KBNotifyPref.user_id.in_(list(candidates.keys())))
+        .all()
+    }
+
+    out: List[str] = []
+    for uid, email in candidates.items():
+        pref = prefs.get(uid)
+        if pref is not None:
+            if not pref.enabled:
+                continue
+            if event == "ingest" and not pref.on_ingest:
+                continue
+            if event == "lint" and not pref.on_lint:
+                continue
+        out.append(email)
+    return sorted(out)
 
 
 # ─── notification types ──────────────────────────────────────────────────────
@@ -171,7 +197,7 @@ async def notify_ingest_result(db: Session, project, source, result: dict) -> bo
         footer = ""
 
     return await send_email(
-        project_recipients(db, project.id),
+        project_recipients(db, project.id, event="ingest"),
         subject,
         _wrap(subject, rows, footer),
     )
@@ -203,7 +229,7 @@ async def notify_lint_alert(db: Session, project, report, issues: Sequence[dict]
     footer = f"<ul style='padding-left:18px;margin-top:16px'>{items}</ul>" if items else ""
 
     return await send_email(
-        project_recipients(db, project.id),
+        project_recipients(db, project.id, event="lint"),
         subject,
         _wrap(subject, rows, footer),
     )

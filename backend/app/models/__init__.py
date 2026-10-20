@@ -5,7 +5,10 @@ from app.models.worklog import WorkLog
 from app.models.issue import Issue
 from app.models.document import Document
 from app.models.audit_log import AuditLog
-from app.models.kb import KBSource, KBPage, KBLink, KBIngestJob, KBLintReport, KBPageVersion
+from app.models.kb import (
+    KBSource, KBPage, KBLink, KBIngestJob, KBLintReport, KBPageVersion,
+    KBNotifyPref,
+)
 
 __all__ = [
     "Department",
@@ -30,4 +33,5 @@ __all__ = [
     "KBIngestJob",
     "KBLintReport",
     "KBPageVersion",
+    "KBNotifyPref",
 ]

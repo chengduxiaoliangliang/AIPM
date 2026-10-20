@@ -404,6 +404,7 @@ export async function streamAskKBApi(
 export interface KBNotifyStatus {
   enabled: boolean
   configured: boolean
+  email?: string | null
   smtp_host?: string | null
   smtp_port?: number
   from?: string | null
@@ -428,4 +429,23 @@ export function sendKBNotifyTestApi() {
     method: 'POST',
     timeout: 60000
   })
+}
+
+export interface KBNotifyPref {
+  enabled: boolean
+  on_ingest: boolean
+  on_lint: boolean
+  email?: string | null
+}
+
+export function getKBNotifyPrefsApi() {
+  return request<KBNotifyPref>({ url: '/kb/notify/prefs', method: 'GET' })
+}
+
+export function updateKBNotifyPrefsApi(data: {
+  enabled: boolean
+  on_ingest: boolean
+  on_lint: boolean
+}) {
+  return request<KBNotifyPref>({ url: '/kb/notify/prefs', method: 'PUT', data })
 }

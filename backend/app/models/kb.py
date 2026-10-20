@@ -13,7 +13,8 @@ Supporting tables:
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
+    Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.mysql import LONGTEXT
 
@@ -169,3 +170,23 @@ class KBPageVersion(Base):
     source_id = Column(Integer, nullable=True)
     created_by = Column(Integer, ForeignKey("sys_users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class KBNotifyPref(Base):
+    """Per-user email subscription for knowledge-base notifications.
+
+    A missing row means "all defaults on", so users only need a row once they
+    opt out of something.
+    """
+
+    __tablename__ = "pm_kb_notify_prefs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(
+        Integer, ForeignKey("sys_users.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    enabled = Column(Boolean, default=True)     # master switch
+    on_ingest = Column(Boolean, default=True)   # ingest finished / failed
+    on_lint = Column(Boolean, default=True)     # health check alerts
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
