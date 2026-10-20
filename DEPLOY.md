@@ -113,6 +113,27 @@ docker exec aipm-backend python scripts/kb_permission_check.py \
 脚本会自动创建三种可见范围的测试页，对 admin / DEV / QA 逐一断言结构树与详情接口的
 可见性，结束后清理，退出码 0 表示全部通过。非项目成员会被跳过而非误判失败。
 
+### 验收与流式检查
+
+发布前建议依次执行（均在容器内运行）：
+
+```bash
+# 1) 整体验收：上传→抽取→摄入→浏览→双链→版本→权限→问答→体检→导出
+docker exec aipm-backend python scripts/kb_acceptance.py \
+  --base-url http://127.0.0.1:8000/api/v1
+
+# 2) 流式检查：确认首 token 早于结束、分帧数达标
+docker exec aipm-backend python scripts/kb_stream_check.py \
+  --base-url http://127.0.0.1:8000/api/v1
+```
+
+`kb_acceptance.py` 会自动清理产生的资料与页面（`--keep` 可保留现场）。
+`kb_stream_check.py` 在知识库为空时会跳过问答检查，只验证 AI 助手对话流式。
+
+> 流式检查的关键断言是**时间差**：首 token 时间必须明显早于结束时间。
+> 如果 LLM 客户端被错误地以 `streaming=False` 复用，接口仍会正常返回内容，
+> 但会一次性吐出整段——只有靠计时才能发现。
+
 ## 默认账号
 种子数据内置 5 个账号，密码统一为 `123456`（首次登录后请立即修改）：
 
