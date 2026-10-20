@@ -101,6 +101,18 @@ API 重启时会把未完成的 queued/running 任务重新入队（运行未超
 
 支持格式：PDF、Word(.docx)、Excel(.xlsx)、Markdown、TXT、CSV、JSON、HTML、常见代码文件。
 
+### 权限回归检查
+
+页面级权限（项目可见 / 指定角色 / 仅自己）改动后，建议跑一次回归脚本：
+
+```bash
+docker exec aipm-backend python scripts/kb_permission_check.py \
+  --base-url http://127.0.0.1:8000/api/v1
+```
+
+脚本会自动创建三种可见范围的测试页，对 admin / DEV / QA 逐一断言结构树与详情接口的
+可见性，结束后清理，退出码 0 表示全部通过。非项目成员会被跳过而非误判失败。
+
 ## 默认账号
 种子数据内置 5 个账号，密码统一为 `123456`（首次登录后请立即修改）：
 
