@@ -125,7 +125,21 @@ docker exec aipm-backend python scripts/kb_acceptance.py \
 # 2) 流式检查：确认首 token 早于结束、分帧数达标
 docker exec aipm-backend python scripts/kb_stream_check.py \
   --base-url http://127.0.0.1:8000/api/v1
+
+# 3) 性能基线：建立
+docker exec aipm-backend python scripts/kb_benchmark.py \
+  --base-url http://127.0.0.1:8000/api/v1 --save /app/data/perf-baseline.json
+
+# 4) 性能对比（不覆盖基线；有回归时退出码 1）
+docker exec aipm-backend python scripts/kb_benchmark.py \
+  --base-url http://127.0.0.1:8000/api/v1 --baseline /app/data/perf-baseline.json
 ```
+
+`kb_benchmark.py` 记录接口延迟（3 次取中位数）、摄入总耗时、问答/流式耗时、体检与导出。
+`--skip-llm` 可只跑快速路径（不调用模型）。
+
+阈值分两档：**接口类默认 50%**，**模型相关默认 150%**。因为大模型供应商延迟
+本身就会在两倍范围内波动，用同一阈值只会产生假警报，久而久之没人再看这个结果。
 
 `kb_acceptance.py` 会自动清理产生的资料与页面（`--keep` 可保留现场）。
 `kb_stream_check.py` 在知识库为空时会跳过问答检查，只验证 AI 助手对话流式。

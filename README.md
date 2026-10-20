@@ -152,6 +152,66 @@ pnpm dev                       # http://localhost:5173，已配置 /api 代理
 
 ---
 
+## 测试与验收
+
+知识库是系统里链路最长、最容易"结果对但行为错"的模块，因此配了四个可重复执行的检查脚本
+（零额外依赖，全部在容器内运行）：
+
+```bash
+# 权限矩阵：24 项断言
+docker exec aipm-backend python scripts/kb_permission_check.py \
+  --base-url http://127.0.0.1:8000/api/v1
+
+# 流式行为：3 个端点 × 5 项断言
+docker exec aipm-backend python scripts/kb_stream_check.py \
+  --base-url http://127.0.0.1:8000/api/v1
+
+# 端到端验收：22 步
+docker exec aipm-backend python scripts/kb_acceptance.py \
+  --base-url http://127.0.0.1:8000/api/v1
+
+# 性能基线：建立基线
+docker exec aipm-backend python scripts/kb_benchmark.py \
+  --base-url http://127.0.0.1:8000/api/v1 --save /app/data/perf-baseline.json
+
+# 之后与基线对比（不会覆盖基线）
+docker exec aipm-backend python scripts/kb_benchmark.py \
+  --base-url http://127.0.0.1:8000/api/v1 --baseline /app/data/perf-baseline.json
+```
+
+| 脚本 | 关注点 | 说明 |
+|---|---|---|
+| `kb_permission_check.py` | 权限矩阵 | 三种可见范围 × 四类角色，结构树与详情接口双重断言 |
+| `kb_stream_check.py` | 流式真实性 | **靠计时判断**：首 token 必须明显早于结束 |
+| `kb_acceptance.py` | 全链路 | 上传→摄入→浏览→双链→版本→权限→问答→体检→导出 |
+| `kb_benchmark.py` | 性能趋势 | 记录各接口耗时，与基线对比并标记回归 |
+
+### 验收清单（22 步）
+
+| # | 检查项 | # | 检查项 |
+|---|---|---|---|
+| 01 | 服务健康检查 | 12 | 社区发现 |
+| 02 | 知识库项目列表 | 13 | 版本快照 |
+| 03 | 上传资料 | 14 | 编辑产生新版本 |
+| 04 | 文本抽取 | 15 | 版本回滚 |
+| 05 | 摄入入队 | 16 | 页面级权限生效 |
+| 06 | 摄入完成 | 17 | 知识库问答 |
+| 07 | 生成知识页面 | 18 | 问答引用来源 |
+| 08 | 自动生成索引页 | 19 | 流式输出 |
+| 09 | 自动生成变更日志 | 20 | 知识库体检 |
+| 10 | 页面正文非空 | 21 | 整库导出 |
+| 11 | 双链解析 | 22 | 摄入队列状态 |
+
+每步输出 PASS / FAIL / SKIP，退出码可直接接入 CI。脚本会记录基线页面集合，
+**只清理本次新增的数据**，不会误删已有知识库。
+
+> **为什么流式要单独测？**
+> 如果 LLM 客户端被错误地以 `streaming=False` 复用，接口仍会正常返回内容，
+> 只是把整段一次性吐出。结果层面完全正确，只有测量「首 token 时间 vs 总耗时」
+> 才能发现。这个 Bug 真实发生过一次。
+
+---
+
 ## 知识库：为什么不是 RAG
 
 传统 RAG 的流程是「提问 → 检索相关片段 → 拼进提示词 → 生成答案」。
