@@ -86,6 +86,9 @@
                   @click="openPageById(p.id)"
                 >
                   <span class="page-dot" :class="`t-${g.type}`"></span>
+                  <el-icon v-if="p.visibility && p.visibility !== 'project'" class="page-lock" :title="visText(p.visibility)">
+                    <Lock />
+                  </el-icon>
                   <span class="page-name">{{ p.title }}</span>
                   <span class="page-proj" v-if="isAllProjects && p.project_name">{{ p.project_name }}</span>
                 </div>
@@ -186,6 +189,10 @@
               <el-tag size="small" effect="plain" :type="tagType(activePage.page_type)">
                 {{ typeLabel(activePage.page_type) }}
               </el-tag>
+              <el-tag
+                v-if="activePage.visibility && activePage.visibility !== 'project'"
+                size="small" type="warning" effect="plain"
+              >{{ visText(activePage.visibility) }}</el-tag>
               <span class="pt-title">{{ activePage.title }}</span>
             </div>
             <div class="pt-actions">
@@ -349,6 +356,22 @@
         <el-form-item label="一句话摘要">
           <el-input v-model="pageForm.summary" placeholder="用于索引页展示" />
         </el-form-item>
+        <el-row :gutter="16">
+          <el-col :span="10">
+            <el-form-item label="可见范围">
+              <el-select v-model="pageForm.visibility" style="width: 100%">
+                <el-option label="项目可见（默认）" value="project" />
+                <el-option label="指定角色可见" value="restricted" />
+                <el-option label="仅自己可见" value="private" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="14" v-if="pageForm.visibility === 'restricted'">
+            <el-form-item label="允许的角色（逗号分隔）">
+              <el-input v-model="pageForm.allowed_roles" placeholder="例如 PM,DEV" />
+            </el-form-item>
+          </el-col>
+        </el-row>
         <el-form-item label="正文（Markdown，使用 [[页面标题]] 建立双链）">
           <el-input v-model="pageForm.content" type="textarea" :rows="16" />
         </el-form-item>
@@ -390,6 +413,22 @@
           <div class="issue-detail">{{ iss.detail }}</div>
           <div class="issue-sug" v-if="iss.suggestion">建议：{{ iss.suggestion }}</div>
         </div>
+      </div>
+
+      <div class="notify-box">
+        <div class="nb-head">
+          <span>邮件通知</span>
+          <el-tag size="small" :type="notifyStatus?.configured ? 'success' : 'info'" effect="plain">
+            {{ notifyStatus?.configured ? '已配置' : '未配置' }}
+          </el-tag>
+        </div>
+        <div class="nb-meta" v-if="notifyStatus">
+          <div v-if="notifyStatus.smtp_host">{{ notifyStatus.smtp_host }}:{{ notifyStatus.smtp_port }}</div>
+          <div v-else>未设置 SMTP 服务器</div>
+          <div>摄入完成通知：{{ notifyStatus.on_ingest ? '开启' : '关闭' }}</div>
+          <div>健康分低于 {{ notifyStatus.lint_threshold }} 时自动告警</div>
+        </div>
+        <el-button size="small" :loading="testingEmail" @click="testEmail">发送测试邮件</el-button>
       </div>
     </el-drawer>
 
@@ -435,7 +474,7 @@ import * as echarts from 'echarts'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Upload, Download, Refresh, Edit, Delete, DataAnalysis, MagicStick,
-  Document, Files, Clock, ArrowRight, Loading, UploadFilled
+  Document, Files, Clock, ArrowRight, Loading, UploadFilled, Lock
 } from '@element-plus/icons-vue'
 import {
   listKBProjectsApi, getKBStructureApi, listKBSourcesApi, getKBPageApi,
@@ -443,11 +482,13 @@ import {
   deleteKBSourceApi, ingestKBSourceApi, listKBJobsApi, runKBLintApi,
   getLatestKBLintApi, downloadKBSourceApi, exportKBWikiApi, getKBGraphApi,
   listKBPageVersionsApi, getKBVersionApi, restoreKBVersionApi,
-  streamAskKBApi, getKBStructureAllApi, getKBGraphAllApi, runKBLintAllApi
+  streamAskKBApi, getKBStructureAllApi, getKBGraphAllApi, runKBLintAllApi,
+  getKBNotifyStatusApi, sendKBNotifyTestApi
 } from '@/api/kb'
 import type {
   KBProjectSummary, KBStructure, KBSource, KBPageBrief, KBPageDetail,
-  KBLintReport, KBIngestJob, KBPageVersionBrief, KBPageVersionDetail, KBAskCitation
+  KBLintReport, KBIngestJob, KBPageVersionBrief, KBPageVersionDetail, KBAskCitation,
+  KBNotifyStatus
 } from '@/api/kb'
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -492,8 +533,19 @@ const askCitations = ref<KBAskCitation[]>([])
 const asking = ref(false)
 const savingAnswer = ref(false)
 
+// Email notifications
+const notifyStatus = ref<KBNotifyStatus | null>(null)
+const testingEmail = ref(false)
+
 const editingId = ref<number | null>(null)
-const pageForm = reactive({ title: '', page_type: 'topic', summary: '', content: '' })
+const pageForm = reactive({
+  title: '',
+  page_type: 'topic',
+  summary: '',
+  content: '',
+  visibility: 'project',
+  allowed_roles: ''
+})
 
 const pageTypes = [
   { value: 'overview', label: '综述' },
@@ -546,6 +598,9 @@ const askSamples = computed(() => {
 // ─── formatting helpers ──────────────────────────────────────────────────────
 function typeLabel(t: string) { return TYPE_LABEL[t] || t }
 function isReserved(slug: string) { return slug === 'index' || slug === 'log' }
+function visText(v?: string) {
+  return ({ project: '项目可见', restricted: '指定角色', private: '仅自己' } as any)[v || 'project'] || '项目可见'
+}
 function tagType(t: string) {
   return ({ overview: 'success', topic: '', entity: 'warning', comparison: 'info', decision: 'danger' } as any)[t] || ''
 }
@@ -558,10 +613,10 @@ function fmtSize(n: number) {
 }
 function healthClass(score: number) { return score >= 80 ? 'good' : score >= 60 ? 'warn' : 'bad' }
 function srcStatusText(s: string) {
-  return ({ uploaded: '待解析', ready: '待摄入', ingesting: '整理中', indexed: '已入库', failed: '失败' } as any)[s] || s
+  return ({ uploaded: '待解析', ready: '待摄入', queued: '排队中', ingesting: '整理中', indexed: '已入库', failed: '失败' } as any)[s] || s
 }
 function srcTagType(s: string) {
-  return ({ uploaded: 'info', ready: 'warning', ingesting: 'primary', indexed: 'success', failed: 'danger' } as any)[s] || 'info'
+  return ({ uploaded: 'info', ready: 'warning', queued: 'info', ingesting: 'primary', indexed: 'success', failed: 'danger' } as any)[s] || 'info'
 }
 function severityType(s: string) {
   return ({ high: 'danger', medium: 'warning', low: 'info' } as any)[s] || 'info'
@@ -1014,10 +1069,35 @@ async function saveAnswer() {
   }
 }
 
+// ─── email notifications ────────────────────────────────────────────────────
+async function loadNotifyStatus() {
+  try {
+    const res = await getKBNotifyStatusApi()
+    notifyStatus.value = res.data
+  } catch {
+    notifyStatus.value = null
+  }
+}
+
+async function testEmail() {
+  testingEmail.value = true
+  try {
+    const res = await sendKBNotifyTestApi()
+    ElMessage.success(`测试邮件已发送至 ${res.data.to}`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '发送失败，请检查 SMTP 配置')
+  } finally {
+    testingEmail.value = false
+  }
+}
+
 // ─── page CRUD ───────────────────────────────────────────────────────────────
 function openCreatePage() {
   editingId.value = null
-  Object.assign(pageForm, { title: '', page_type: 'topic', summary: '', content: '' })
+  Object.assign(pageForm, {
+    title: '', page_type: 'topic', summary: '', content: '',
+    visibility: 'project', allowed_roles: ''
+  })
   editorVisible.value = true
 }
 
@@ -1027,7 +1107,9 @@ function openEditPage(p: KBPageDetail) {
     title: p.title,
     page_type: p.page_type,
     summary: p.summary || '',
-    content: p.content || ''
+    content: p.content || '',
+    visibility: p.visibility || 'project',
+    allowed_roles: p.allowed_roles || ''
   })
   editorVisible.value = true
 }
@@ -1093,6 +1175,7 @@ function saveBlob(blob: Blob, filename: string) {
 
 onMounted(async () => {
   window.addEventListener('resize', onResize)
+  loadNotifyStatus()
   await loadProjects()
   if (currentProjectId.value) {
     await Promise.all([loadStructure(), loadSources(), loadLint(), loadJobs()])
@@ -1476,5 +1559,25 @@ onBeforeUnmount(() => {
 @keyframes kb-blink { to { visibility: hidden; } }
 .cite-proj {
   font-style: normal; font-size: 10px; opacity: .65; margin-left: 4px;
+}
+
+/* Page-level access control */
+.page-lock {
+  font-size: 11px; color: #d48806; flex-shrink: 0;
+}
+
+/* Email notification block (inside lint drawer) */
+.notify-box {
+  margin-top: 22px; padding-top: 16px;
+  border-top: 1px dashed var(--border-color);
+}
+.nb-head {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; font-weight: 600; color: var(--text-main);
+  margin-bottom: 8px;
+}
+.nb-meta {
+  font-size: 12px; color: var(--text-muted); line-height: 1.9;
+  margin-bottom: 10px;
 }
 </style>

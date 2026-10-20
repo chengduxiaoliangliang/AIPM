@@ -13,6 +13,10 @@ export interface KBPageBrief {
   updated_at: string
   project_id?: number
   project_name?: string
+  /** project | restricted | private */
+  visibility?: string
+  allowed_roles?: string | null
+  created_by?: number | null
 }
 
 export interface KBLinkRef {
@@ -393,4 +397,35 @@ export async function streamAskKBApi(
   } catch (e) {
     onError(e)
   }
+}
+
+// ─── queue / notifications ────────────────────────────────────────────────────
+
+export interface KBNotifyStatus {
+  enabled: boolean
+  configured: boolean
+  smtp_host?: string | null
+  smtp_port?: number
+  from?: string | null
+  on_ingest: boolean
+  lint_threshold: number
+}
+
+export function getKBQueueStatusApi() {
+  return request<{ depth: number; workers: number }>({
+    url: '/kb/queue/status',
+    method: 'GET'
+  })
+}
+
+export function getKBNotifyStatusApi() {
+  return request<KBNotifyStatus>({ url: '/kb/notify/status', method: 'GET' })
+}
+
+export function sendKBNotifyTestApi() {
+  return request<{ to: string }>({
+    url: '/kb/notify/test',
+    method: 'POST',
+    timeout: 60000
+  })
 }

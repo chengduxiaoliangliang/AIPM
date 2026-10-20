@@ -43,24 +43,28 @@ class PermissionScopedTools:
     @staticmethod
     def get_user_accessible_project_ids(user: User, db: Session) -> List[int]:
         """Get list of project IDs the user has permission to view."""
-        try:
-            if user.is_superuser or any(r.code in ["ADMIN", "PM"] for r in user.roles):
-                return [p.id for p in db.query(Project.id).all()]
+        if user.is_superuser or any(r.code in ["ADMIN", "PM"] for r in user.roles):
+            return [p.id for p in db.query(Project.id).all()]
 
-            member_pids = [
-                m.project_id
-                for m in db.query(ProjectMember.project_id)
-                .filter(ProjectMember.user_id == user.id).all()
-            ]
+        # Membership is the primary source of truth. Keep it outside the
+        # try/except so a failure in the secondary query can never silently
+        # collapse the whole result to "no access".
+        member_pids = [
+            m.project_id
+            for m in db.query(ProjectMember.project_id)
+            .filter(ProjectMember.user_id == user.id).all()
+        ]
+
+        owner_pids: List[int] = []
+        try:
             owner_pids = [
-                p.id
-                for p in db.query(Project.id)
-                .filter((Project.owner_id == user.id) | (Project.created_by == user.id)).all()
+                p.id for p in db.query(Project.id)
+                .filter(Project.owner_id == user.id).all()
             ]
-            return list(set(member_pids + owner_pids))
         except Exception as e:
-            logger.warning(f"get_user_accessible_project_ids failed: {e}")
-            return []
+            logger.error(f"owner_pids lookup failed: {e}")
+
+        return list(set(member_pids + owner_pids))
 
     @classmethod
     def query_projects(

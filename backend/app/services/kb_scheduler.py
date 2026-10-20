@@ -59,6 +59,16 @@ async def _run_once() -> int:
                 logger.info(
                     "KB lint %s: score=%s", proj.name, report.score
                 )
+
+                # Only automatic sweeps notify — manual "体检" clicks stay quiet.
+                try:
+                    import json
+
+                    from app.services import notifier
+                    issues = json.loads(report.issues_json or "[]")
+                    await notifier.notify_lint_alert(db, proj, report, issues)
+                except Exception:
+                    logger.debug("Lint notification skipped", exc_info=True)
             except Exception:
                 logger.exception("KB lint failed for project %s", proj.id)
                 db.rollback()

@@ -86,6 +86,21 @@ class Settings(BaseSettings):
     KB_LINT_ENABLED: bool = True
     KB_LINT_INTERVAL_HOURS: int = 24
     KB_LINT_INITIAL_DELAY_MIN: int = 10
+    # Redis-backed ingest queue
+    KB_INGEST_WORKERS: int = 2
+    KB_INGEST_MAX_RETRY: int = 1
+
+    # ── Email notifications (KB changes) ──────────────────────────────────
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 465
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+    SMTP_SSL: bool = True
+    SMTP_TLS: bool = False
+    KB_NOTIFY_ENABLED: bool = True
+    KB_NOTIFY_ON_INGEST: bool = True
+    KB_NOTIFY_LINT_SCORE_BELOW: int = 70
 
     # ── CORS: comma-separated origins, or "*" for any ─────────────────────
     BACKEND_CORS_ORIGINS: str = "*"

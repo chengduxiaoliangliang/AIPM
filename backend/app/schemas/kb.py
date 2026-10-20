@@ -12,6 +12,10 @@ class KBPageBrief(BaseModel):
     summary: Optional[str] = None
     tags: Optional[str] = None
     updated_at: datetime
+    # project | restricted | private
+    visibility: str = "project"
+    allowed_roles: Optional[str] = None
+    created_by: Optional[int] = None
 
 
 class KBPageOut(KBPageBrief):
@@ -31,6 +35,8 @@ class KBPageUpsert(BaseModel):
     summary: Optional[str] = None
     content: Optional[str] = None
     tags: Optional[str] = None
+    visibility: str = "project"
+    allowed_roles: Optional[str] = None
 
 
 class KBSourceOut(BaseModel):

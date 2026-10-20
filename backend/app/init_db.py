@@ -47,12 +47,37 @@ def create_database_if_not_exists():
         connection.close()
 
 
+def ensure_kb_columns():
+    """Add columns introduced after a table was first created.
+
+    `Base.metadata.create_all` only creates *missing tables* — it never alters an
+    existing one. New columns therefore need an explicit, idempotent migration.
+    """
+    from sqlalchemy import text
+
+    wanted = [
+        ("pm_kb_pages", "visibility", "VARCHAR(16) NOT NULL DEFAULT 'project'"),
+        ("pm_kb_pages", "allowed_roles", "VARCHAR(255) NULL"),
+    ]
+    with engine.begin() as conn:
+        for table, column, ddl in wanted:
+            exists = conn.execute(text(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = :t AND column_name = :c"
+            ), {"t": table, "c": column}).scalar()
+            if not exists:
+                conn.execute(text(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {ddl}"))
+                print(f"  + added {table}.{column}")
+
+
 def init_db(force: bool = False):
     create_database_if_not_exists()
 
     print("Creating all database tables...")
     Base.metadata.create_all(bind=engine)
     print("Database tables created successfully.")
+
+    ensure_kb_columns()
 
     db = SessionLocal()
     try:

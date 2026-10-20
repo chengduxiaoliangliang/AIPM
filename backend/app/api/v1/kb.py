@@ -22,7 +22,6 @@ Routes
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import io
 import json
@@ -33,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -52,7 +51,7 @@ from app.schemas.kb import (
     KBIngestJobOut, KBLintOut, KBPageBrief, KBPageOut, KBPageUpsert,
     KBPageVersionBrief, KBPageVersionOut, KBProjectSummary, KBSourceOut,
 )
-from app.services import kb_extract, kb_wiki
+from app.services import kb_extract, kb_queue, kb_wiki
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +84,55 @@ def _assert_project(db: Session, project_id: int, user: User) -> Project:
     return project
 
 
-def _source_out(s: KBSource) -> KBSourceOut:
-    return KBSourceOut(
+# ─── page-level access control ───────────────────────────────────────────────
+
+def _role_codes(user: User) -> set:
+    return {r.code for r in user.roles}
+
+
+def _can_view_page(page: KBPage, user: User) -> bool:
+    """Whether `user` may read this page (project access is checked separately)."""
+    if user.is_superuser:
+        return True
+    roles = _role_codes(user)
+    if "ADMIN" in roles:
+        return True
+
+    vis = page.visibility or "project"
+    if vis == "project":
+        return True
+    if page.created_by == user.id:
+        return True
+    if vis == "private":
+        return False
+    if "PM" in roles:
+        return True
+    allowed = {s.strip() for s in (page.allowed_roles or "").split(",") if s.strip()}
+    return bool(roles & allowed)
+
+
+def _can_edit_page(page: KBPage, user: User) -> bool:
+    if user.is_superuser:
+        return True
+    roles = _role_codes(user)
+    if "ADMIN" in roles or "PM" in roles:
+        return True
+    return page.created_by == user.id
+
+
+def _visible_pages(
+    db: Session,
+    project_id: int,
+    user: User,
+    include_reserved: bool = False,
+) -> List[KBPage]:
+    q = db.query(KBPage).filter(KBPage.project_id == project_id)
+    if not include_reserved:
+        q = q.filter(KBPage.slug.notin_(_RESERVED))
+    return [p for p in q.all() if _can_view_page(p, user)]
+
+
+def _source_out(s: KBSource) -> KBSourceOut:    return KBSourceOut(
         id=s.id, project_id=s.project_id, original_name=s.original_name,
         mime_type=s.mime_type, size_bytes=s.size_bytes or 0,
         char_count=s.char_count or 0, status=s.status,
@@ -95,35 +141,21 @@ def _source_out(s: KBSource) -> KBSourceOut:
     )
 
 
+_VISIBILITIES = ("project", "restricted", "private")
+
+
+def _clean_visibility(value: Optional[str]) -> str:
+    return value if value in _VISIBILITIES else "project"
+
+
 def _page_brief(p: KBPage) -> KBPageBrief:
     return KBPageBrief(
         id=p.id, slug=p.slug, title=p.title, page_type=p.page_type,
         summary=p.summary, tags=p.tags, updated_at=p.updated_at,
+        visibility=p.visibility or "project",
+        allowed_roles=p.allowed_roles,
+        created_by=p.created_by,
     )
-
-
-async def _ingest_worker(source_id: int, user_id: Optional[int]) -> None:
-    """Background task: owns its own DB session.
-
-    Must stay async so it runs on the application's event loop — the shared
-    ChatOpenAI client binds its connection pool to that loop, and running it in
-    a fresh `asyncio.run()` loop would fail with "Event loop is closed".
-    """
-    from app.database import SessionLocal
-
-    db = SessionLocal()
-    try:
-        src = db.get(KBSource, source_id)
-        if not src:
-            return
-        project = db.get(Project, src.project_id)
-        if not project:
-            return
-        await kb_wiki.ingest_source(db, project, src, user_id)
-    except Exception:
-        logger.exception("ingest worker crashed for source %s", source_id)
-    finally:
-        db.close()
 
 
 # ─── project overview ────────────────────────────────────────────────────────
@@ -180,11 +212,9 @@ def project_structure(
 ):
     """Page tree grouped by type — the 'knowledge structure' view."""
     project = _assert_project(db, project_id, current_user)
-    pages = (
-        db.query(KBPage)
-        .filter(KBPage.project_id == project_id, KBPage.slug.notin_(_RESERVED))
-        .order_by(KBPage.page_type.asc(), KBPage.title.asc())
-        .all()
+    pages = sorted(
+        _visible_pages(db, project_id, current_user),
+        key=lambda p: (p.page_type or "", p.title or ""),
     )
     groups: Dict[str, List[dict]] = {}
     for p in pages:
@@ -216,8 +246,12 @@ def project_graph(
     current_user: User = Depends(get_current_user),
 ):
     _assert_project(db, project_id, current_user)
-    pages = db.query(KBPage).filter(KBPage.project_id == project_id).all()
-    links = db.query(KBLink).filter(KBLink.project_id == project_id).all()
+    pages = _visible_pages(db, project_id, current_user, include_reserved=True)
+    visible_ids = {p.id for p in pages}
+    links = [
+        l for l in db.query(KBLink).filter(KBLink.project_id == project_id).all()
+        if l.from_page_id in visible_ids and l.to_page_id in visible_ids
+    ]
 
     inbound: Dict[int, int] = {}
     for l in links:
@@ -277,6 +311,7 @@ def list_pages(
         like = f"%{keyword}%"
         q = q.filter(KBPage.title.ilike(like) | KBPage.content.ilike(like))
     pages = q.order_by(KBPage.updated_at.desc()).limit(300).all()
+    pages = [p for p in pages if _can_view_page(p, current_user)]
     return ResponseModel(code=200, message="success", data=[_page_brief(p) for p in pages])
 
 
@@ -290,6 +325,8 @@ def get_page(
     if not p:
         raise NotFoundException("页面不存在")
     _assert_project(db, p.project_id, current_user)
+    if not _can_view_page(p, current_user):
+        raise ForbiddenException("该页面已被限制访问")
 
     inbound = (
         db.query(KBLink, KBPage)
@@ -319,6 +356,8 @@ def get_page(
         id=p.id, project_id=p.project_id, slug=p.slug, title=p.title,
         page_type=p.page_type, summary=p.summary, tags=p.tags, content=p.content,
         source_ids=source_ids, generated_by=p.generated_by,
+        visibility=p.visibility or "project", allowed_roles=p.allowed_roles,
+        created_by=p.created_by,
         created_at=p.created_at, updated_at=p.updated_at,
         inbound_links=[{"id": page.id, "title": page.title, "page_type": page.page_type} for _, page in inbound],
         outbound_links=[{"id": page.id, "title": page.title, "page_type": page.page_type} for _, page in outbound],
@@ -344,6 +383,8 @@ def create_page(
         project_id=project_id, slug=slug, title=payload.title,
         page_type=payload.page_type if payload.page_type in kb_wiki.PAGE_TYPES else "topic",
         summary=payload.summary, content=payload.content, tags=payload.tags,
+        visibility=_clean_visibility(payload.visibility),
+        allowed_roles=payload.allowed_roles,
         generated_by="manual", created_by=current_user.id,
     )
     db.add(page)
@@ -369,11 +410,15 @@ def update_page(
     _assert_project(db, page.project_id, current_user)
     if page.slug in _RESERVED:
         raise HTTPException(status_code=400, detail="系统页面不可直接编辑")
+    if not _can_edit_page(page, current_user):
+        raise ForbiddenException("无权编辑该页面")
 
     page.title = payload.title or page.title
     page.summary = payload.summary if payload.summary is not None else page.summary
     page.content = payload.content if payload.content is not None else page.content
     page.tags = payload.tags if payload.tags is not None else page.tags
+    page.visibility = _clean_visibility(payload.visibility)
+    page.allowed_roles = payload.allowed_roles
     if payload.page_type in kb_wiki.PAGE_TYPES:
         page.page_type = payload.page_type
     page.generated_by = "manual"
@@ -400,6 +445,8 @@ def delete_page(
     _assert_project(db, page.project_id, current_user)
     if page.slug in _RESERVED:
         raise HTTPException(status_code=400, detail="系统页面不可删除")
+    if not _can_edit_page(page, current_user):
+        raise ForbiddenException("无权删除该页面")
 
     project_id = page.project_id
     db.delete(page)
@@ -621,22 +668,38 @@ def delete_source(
 @router.post("/sources/{source_id}/ingest", response_model=ResponseModel[Dict[str, Any]])
 def ingest_source(
     source_id: int,
-    background: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Queue the ingest pipeline. Poll /projects/{pid}/jobs to follow progress."""
+    """Push the source onto the Redis ingest queue.
+
+    Poll /projects/{pid}/jobs (or /jobs/status) to follow progress. Queued work
+    survives API restarts, unlike FastAPI BackgroundTasks.
+    """
     s = db.get(KBSource, source_id)
     if not s:
         raise NotFoundException("资料不存在")
     _assert_project(db, s.project_id, current_user)
     if not s.text_content:
         raise HTTPException(status_code=400, detail="该资料没有可用的文本内容，无法摄入")
-    if s.status == "ingesting":
-        raise HTTPException(status_code=409, detail="该资料正在摄入中")
+    if s.status in ("ingesting", "queued"):
+        raise HTTPException(status_code=409, detail="该资料已在队列中或正在摄入")
 
-    background.add_task(_ingest_worker, source_id, current_user.id)
-    return ResponseModel(code=200, message="已加入摄入队列", data={"source_id": source_id, "status": "queued"})
+    try:
+        job = kb_queue.enqueue_ingest(db, s, current_user.id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    return ResponseModel(
+        code=200,
+        message="已加入摄入队列",
+        data={
+            "source_id": source_id,
+            "status": "queued",
+            "job_id": job.id,
+            "queue_depth": kb_queue.queue_depth(),
+        },
+    )
 
 
 @router.get("/projects/{project_id}/jobs", response_model=ResponseModel[List[KBIngestJobOut]])
@@ -661,6 +724,63 @@ def list_jobs(
             started_at=j.started_at, finished_at=j.finished_at, created_at=j.created_at,
         ) for j in rows
     ])
+
+
+@router.get("/queue/status", response_model=ResponseModel[Dict[str, Any]])
+def queue_status(
+    current_user: User = Depends(get_current_user),
+):
+    """Current depth of the ingest queue (pending items)."""
+    return ResponseModel(code=200, message="success", data={
+        "depth": kb_queue.queue_depth(),
+        "workers": settings.KB_INGEST_WORKERS,
+    })
+
+
+# ─── notifications ───────────────────────────────────────────────────────────
+
+@router.get("/notify/status", response_model=ResponseModel[Dict[str, Any]])
+def notify_status(
+    current_user: User = Depends(get_current_user),
+):
+    from app.services import notifier
+
+    return ResponseModel(code=200, message="success", data={
+        "enabled": settings.KB_NOTIFY_ENABLED,
+        "configured": notifier.is_email_configured(),
+        "smtp_host": settings.SMTP_HOST or None,
+        "smtp_port": settings.SMTP_PORT,
+        "from": settings.SMTP_FROM or settings.SMTP_USER or None,
+        "on_ingest": settings.KB_NOTIFY_ON_INGEST,
+        "lint_threshold": settings.KB_NOTIFY_LINT_SCORE_BELOW,
+    })
+
+
+@router.post("/notify/test", response_model=ResponseModel[Dict[str, Any]])
+async def notify_test(
+    current_user: User = Depends(get_current_user),
+):
+    """Send a test email to the current user so SMTP can be verified."""
+    from app.services import notifier
+
+    if not _is_admin(current_user):
+        raise ForbiddenException("仅管理员可发送测试邮件")
+    if not current_user.email:
+        raise HTTPException(status_code=400, detail="当前账号未配置邮箱")
+
+    subject = "[AIPM] 知识库通知测试"
+    body = notifier._wrap(subject, [
+        ("收件人", current_user.email),
+        ("SMTP", f"{settings.SMTP_HOST}:{settings.SMTP_PORT}"),
+        ("说明", "收到这封邮件说明邮件通知配置正常"),
+    ])
+    sent = await notifier.send_email([current_user.email], subject, body)
+    if not sent:
+        raise HTTPException(
+            status_code=400,
+            detail="发送失败，请检查 SMTP 配置或查看后端日志",
+        )
+    return ResponseModel(code=200, message="测试邮件已发送", data={"to": current_user.email})
 
 
 # ─── lint (体检) ─────────────────────────────────────────────────────────────
@@ -744,7 +864,10 @@ async def ask_knowledge_base(
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
 
-    result = await kb_wiki.answer_question(db, project, question, current_user.id)
+    result = await kb_wiki.answer_question(
+        db, [project], question, current_user.id,
+        page_filter=lambda p: _can_view_page(p, current_user),
+    )
 
     saved_id = saved_title = None
     if payload.save_as_page and result.get("answer"):
@@ -808,7 +931,10 @@ async def ask_knowledge_base_stream(
         raise HTTPException(status_code=400, detail="问题不能为空")
 
     return StreamingResponse(
-        _sse(kb_wiki.stream_answer(db, [project], question, current_user.id)),
+        _sse(kb_wiki.stream_answer(
+            db, [project], question, current_user.id,
+            page_filter=lambda p: _can_view_page(p, current_user),
+        )),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -831,7 +957,10 @@ async def ask_all_projects(
     if not projects:
         raise HTTPException(status_code=400, detail="没有可访问的项目")
 
-    result = await kb_wiki.answer_question(db, projects, question, current_user.id)
+    result = await kb_wiki.answer_question(
+        db, projects, question, current_user.id,
+        page_filter=lambda p: _can_view_page(p, current_user),
+    )
     return ResponseModel(code=200, message="success", data=KBAskResponse(
         answer=result["answer"],
         citations=[KBAskCitation(**c) for c in result.get("citations", [])],
@@ -854,7 +983,10 @@ async def ask_all_projects_stream(
         raise HTTPException(status_code=400, detail="没有可访问的项目")
 
     return StreamingResponse(
-        _sse(kb_wiki.stream_answer(db, projects, question, current_user.id)),
+        _sse(kb_wiki.stream_answer(
+            db, projects, question, current_user.id,
+            page_filter=lambda p: _can_view_page(p, current_user),
+        )),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -871,11 +1003,9 @@ def structure_all(
     total = 0
 
     for proj in projects:
-        pages = (
-            db.query(KBPage)
-            .filter(KBPage.project_id == proj.id, KBPage.slug.notin_(_RESERVED))
-            .order_by(KBPage.title.asc())
-            .all()
+        pages = sorted(
+            _visible_pages(db, proj.id, current_user),
+            key=lambda p: p.title or "",
         )
         for page in pages:
             item = _page_brief(page).model_dump()
@@ -908,8 +1038,13 @@ def graph_all(
     pages: List[KBPage] = []
     links: List[KBLink] = []
     for proj in projects:
-        pages.extend(db.query(KBPage).filter(KBPage.project_id == proj.id).all())
-        links.extend(db.query(KBLink).filter(KBLink.project_id == proj.id).all())
+        pages.extend(_visible_pages(db, proj.id, current_user, include_reserved=True))
+    visible_ids = {p.id for p in pages}
+    for proj in projects:
+        links.extend(
+            l for l in db.query(KBLink).filter(KBLink.project_id == proj.id).all()
+            if l.from_page_id in visible_ids and l.to_page_id in visible_ids
+        )
 
     inbound: Dict[int, int] = {}
     for l in links:
@@ -989,7 +1124,10 @@ def export_wiki(
 ):
     """Download the whole wiki as a zip of markdown files."""
     project = _assert_project(db, project_id, current_user)
-    pages = db.query(KBPage).filter(KBPage.project_id == project_id).order_by(KBPage.page_type).all()
+    pages = sorted(
+        _visible_pages(db, project_id, current_user, include_reserved=True),
+        key=lambda p: p.page_type or "",
+    )
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

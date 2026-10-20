@@ -89,6 +89,15 @@ docker compose exec mysql sh -c \
 |---|---|---|
 | `KB_STORAGE_DIR` | `data/kb` | 上传文件落盘目录（相对路径基于 backend 目录） |
 | `KB_MAX_UPLOAD_MB` | `25` | 单个文件大小上限 |
+| `KB_INGEST_WORKERS` | `2` | 摄入队列消费者数量 |
+| `KB_LINT_INTERVAL_HOURS` | `24` | 自动体检周期，`0` 关闭 |
+| `SMTP_HOST` 等 | 空 | 邮件通知；不填则静默跳过 |
+| `KB_NOTIFY_LINT_SCORE_BELOW` | `70` | 健康分低于该值时邮件告警 |
+
+**摄入队列**：任务写入 Redis 列表，由 `KB_INGEST_WORKERS` 个消费者处理。
+API 重启时会把未完成的 queued/running 任务重新入队（运行未超过 10 分钟的不动，
+避免滚动重启时抢走正在跑的任务）。任务通过 `UPDATE ... WHERE status='queued'`
+原子抢占，重复入队不会导致重复处理。
 
 支持格式：PDF、Word(.docx)、Excel(.xlsx)、Markdown、TXT、CSV、JSON、HTML、常见代码文件。
 

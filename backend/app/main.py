@@ -23,19 +23,36 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Start the periodic knowledge-base health check alongside the app."""
-    task = None
+    """Start background workers: ingest queue consumers + periodic KB lint."""
+    tasks = []
+
+    # Ingest queue — recover jobs orphaned by the previous process, then consume.
+    try:
+        from app.database import SessionLocal
+        from app.services import kb_queue
+
+        db = SessionLocal()
+        try:
+            kb_queue.recover_stale(db)
+        finally:
+            db.close()
+        tasks.extend(kb_queue.start_workers())
+    except Exception:
+        logger.exception("Failed to start KB ingest workers")
+
+    # Periodic knowledge-base health check.
     try:
         from app.services.kb_scheduler import scheduler_loop
-        task = asyncio.create_task(scheduler_loop())
+        tasks.append(asyncio.create_task(scheduler_loop()))
     except Exception:
         logger.exception("Failed to start KB lint scheduler")
 
     try:
         yield
     finally:
-        if task:
+        for task in tasks:
             task.cancel()
+        for task in tasks:
             try:
                 await task
             except (asyncio.CancelledError, Exception):

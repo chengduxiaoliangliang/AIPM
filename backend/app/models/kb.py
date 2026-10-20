@@ -78,6 +78,13 @@ class KBPage(Base):
     generated_by = Column(String(32), default="llm")   # llm | manual
     created_by = Column(Integer, ForeignKey("sys_users.id"), nullable=True)
 
+    # Page-level access control.
+    #   project    — anyone with access to the project
+    #   restricted — creator, project managers, and the roles listed below
+    #   private    — creator and admins only
+    visibility = Column(String(16), default="project")
+    allowed_roles = Column(String(255), nullable=True)  # comma-separated role codes
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

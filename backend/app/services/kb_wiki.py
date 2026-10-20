@@ -566,17 +566,34 @@ async def ingest_source(
     project: Project,
     source: KBSource,
     user_id: Optional[int] = None,
+    job_id: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Run the full ingest pipeline for one source. Always returns a result dict."""
-    job = KBIngestJob(
-        project_id=project.id,
-        source_id=source.id,
-        status="running",
-        stage="extracting",
-        progress=10,
-        started_at=datetime.utcnow(),
-    )
-    db.add(job)
+    """Run the full ingest pipeline for one source. Always returns a result dict.
+
+    When `job_id` is provided the caller (queue worker) has already created and
+    atomically claimed the job, so we only update its progress fields.
+    """
+    if job_id is not None:
+        job = db.get(KBIngestJob, job_id)
+        if job is None:
+            job = KBIngestJob(project_id=project.id, source_id=source.id)
+            db.add(job)
+        job.status = "running"
+        job.stage = "extracting"
+        job.progress = 10
+        job.started_at = datetime.utcnow()
+        job.message = None
+    else:
+        job = KBIngestJob(
+            project_id=project.id,
+            source_id=source.id,
+            status="running",
+            stage="extracting",
+            progress=10,
+            started_at=datetime.utcnow(),
+        )
+        db.add(job)
+
     source.status = "ingesting"
     db.commit()
     job_id = job.id
@@ -997,16 +1014,26 @@ def _gather_candidates(
     question: str,
     per_project: int = 8,
     total: int = 16,
+    page_filter=None,
 ) -> List[KBPage]:
-    """Collect candidate pages across one or more projects."""
+    """Collect candidate pages across one or more projects.
+
+    `page_filter` lets the caller apply page-level access control without making
+    this module depend on the permission model.
+    """
     out: List[KBPage] = []
     seen = set()
     for proj in projects:
-        for page in _keyword_candidates(db, proj.id, question, limit=per_project):
+        # Over-fetch so filtering out restricted pages still leaves enough.
+        for page in _keyword_candidates(db, proj.id, question, limit=per_project * 3):
             if page.id in seen:
+                continue
+            if page_filter is not None and not page_filter(page):
                 continue
             seen.add(page.id)
             out.append(page)
+            if len(out) >= total:
+                return out
     return out[:total]
 
 
@@ -1060,13 +1087,14 @@ async def answer_question(
     projects: List[Project],
     question: str,
     user_id: Optional[int] = None,
+    page_filter=None,
 ) -> Dict[str, Any]:
     """Answer a question from one or more wikis, with citations."""
     if isinstance(projects, Project):
         projects = [projects]
     proj_names = {p.id: p.name for p in projects}
 
-    candidates = _gather_candidates(db, projects, question)
+    candidates = _gather_candidates(db, projects, question, page_filter=page_filter)
     if not candidates:
         return {
             "answer": "知识库中还没有可用的页面，无法回答。请先上传资料并完成摄入。",
@@ -1100,6 +1128,7 @@ async def stream_answer(
     projects: List[Project],
     question: str,
     user_id: Optional[int] = None,
+    page_filter=None,
 ):
     """Yield SSE-ready events for a streamed answer.
 
@@ -1115,7 +1144,7 @@ async def stream_answer(
 
     yield {"status": "retrieving"}
 
-    candidates = _gather_candidates(db, projects, question)
+    candidates = _gather_candidates(db, projects, question, page_filter=page_filter)
     if not candidates:
         yield {
             "status": "streaming",
