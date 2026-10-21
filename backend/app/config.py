@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     KB_INGEST_WORKERS: int = 2
     KB_INGEST_MAX_RETRY: int = 1
 
+    # ── Login throttling ──────────────────────────────────────────────────
+    LOGIN_MAX_ATTEMPTS: int = 5
+    LOGIN_LOCKOUT_MINUTES: int = 15
+
     # ── Email notifications (KB changes) ──────────────────────────────────
     SMTP_HOST: str = ""
     SMTP_PORT: int = 465

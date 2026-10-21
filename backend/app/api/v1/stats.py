@@ -19,6 +19,24 @@ from app.api.deps import get_current_user
 
 router = APIRouter()
 
+
+def _recent_months(now: datetime, count: int) -> List[str]:
+    """Return the last `count` calendar months as 'YYYY-MM', oldest first.
+
+    Walking the calendar explicitly avoids the drift you get from
+    `now - timedelta(days=i * 30)`, which can skip or duplicate a month.
+    """
+    year, month = now.year, now.month
+    keys: List[str] = []
+    for _ in range(count):
+        keys.append(f"{year:04d}-{month:02d}")
+        month -= 1
+        if month == 0:
+            month = 12
+            year -= 1
+    return list(reversed(keys))
+
+
 @router.get("/dashboard", response_model=ResponseModel[DashboardStats])
 def get_dashboard_stats(
     db: Session = Depends(get_db),
@@ -78,49 +96,84 @@ def get_dashboard_stats(
         for pr, cnt in task_priority_rows
     ]
 
-    # Monthly Trends (last 6 months)
+    # ── Monthly trends (last 6 calendar months) ──────────────────────────
+    # Aggregated in SQL. The previous version loaded 180 days of rows into
+    # Python and strftime'd every row six times, which degrades quickly.
+    # NOTE: DATE_FORMAT is MySQL-specific — this project targets MySQL only.
     now = datetime.now()
-    monthly_trends = []
-    
-    # Query all recent tasks once
-    six_months_ago = now - timedelta(days=180)
-    recent_tasks = db.query(Task).filter(Task.created_at >= six_months_ago).all()
-    recent_worklogs = db.query(WorkLog).filter(WorkLog.created_at >= six_months_ago).all()
-    
-    for i in range(5, -1, -1):
-        m_date = now - timedelta(days=i * 30)
-        m_str = m_date.strftime("%Y-%m")
-        created_cnt = sum(1 for t in recent_tasks if t.created_at and t.created_at.strftime("%Y-%m") == m_str)
-        done_cnt = sum(1 for t in recent_tasks if t.status == "done" and t.updated_at and t.updated_at.strftime("%Y-%m") == m_str)
-        hrs = sum(w.hours for w in recent_worklogs if w.log_date and w.log_date.strftime("%Y-%m") == m_str)
-        
-        if created_cnt == 0 and done_cnt == 0:
-            created_cnt = 8 + (i * 3) % 7
-            done_cnt = 5 + (i * 2) % 6
-            hrs = 42.0 + (i * 12.5)
+    month_keys = _recent_months(now, 6)
+    since = datetime.strptime(month_keys[0] + "-01", "%Y-%m-%d")
 
-        monthly_trends.append(MonthlyTrend(
-            month=m_str,
-            created_tasks=created_cnt,
-            completed_tasks=done_cnt,
-            logged_hours=round(float(hrs), 1)
-        ))
+    created_rows = dict(
+        db.query(
+            func.date_format(Task.created_at, "%Y-%m").label("m"),
+            func.count(Task.id),
+        ).filter(Task.created_at >= since).group_by("m").all()
+    )
+    done_rows = dict(
+        db.query(
+            func.date_format(Task.updated_at, "%Y-%m").label("m"),
+            func.count(Task.id),
+        ).filter(Task.status == "done", Task.updated_at >= since).group_by("m").all()
+    )
+    hours_rows = dict(
+        db.query(
+            func.date_format(WorkLog.log_date, "%Y-%m").label("m"),
+            func.sum(WorkLog.hours),
+        ).filter(WorkLog.log_date >= since).group_by("m").all()
+    )
 
-    # Member Workloads
+    # 没有数据的月份就是 0。曾经这里会"兜底"生成随机数字，导致看板展示的是
+    # 编造的趋势——管理决策不能建立在假数据上。
+    monthly_trends = [
+        MonthlyTrend(
+            month=key,
+            created_tasks=int(created_rows.get(key, 0)),
+            completed_tasks=int(done_rows.get(key, 0)),
+            logged_hours=round(float(hours_rows.get(key) or 0.0), 1),
+        )
+        for key in month_keys
+    ]
+
+    # ── Member workloads ─────────────────────────────────────────────────
+    # Three grouped queries instead of 3 per user (was 18 round-trips for 6).
     users = db.query(User).filter(User.status == True).limit(6).all()
+    user_ids = [u.id for u in users]
+
+    task_counts: Dict[int, int] = {}
+    done_counts: Dict[int, int] = {}
+    hour_sums: Dict[int, float] = {}
+    if user_ids:
+        task_counts = dict(
+            db.query(Task.assignee_id, func.count(Task.id))
+            .filter(Task.assignee_id.in_(user_ids))
+            .group_by(Task.assignee_id).all()
+        )
+        done_counts = dict(
+            db.query(Task.assignee_id, func.count(Task.id))
+            .filter(Task.assignee_id.in_(user_ids), Task.status == "done")
+            .group_by(Task.assignee_id).all()
+        )
+        hour_sums = dict(
+            db.query(WorkLog.user_id, func.sum(WorkLog.hours))
+            .filter(WorkLog.user_id.in_(user_ids))
+            .group_by(WorkLog.user_id).all()
+        )
+
     member_workloads = []
     for u in users:
-        u_tasks = db.query(Task).filter(Task.assignee_id == u.id).count()
-        u_done = db.query(Task).filter(Task.assignee_id == u.id, Task.status == "done").count()
-        u_hours = db.query(func.sum(WorkLog.hours)).filter(WorkLog.user_id == u.id).scalar() or 0.0
-        comp_rate = round((u_done / u_tasks * 100), 1) if u_tasks > 0 else 100.0
-        
+        u_tasks = int(task_counts.get(u.id, 0))
+        u_done = int(done_counts.get(u.id, 0))
+        u_hours = float(hour_sums.get(u.id) or 0.0)
+        # 无任务时给 0%，而不是 100%——后者会让人误以为"全部完成"
+        comp_rate = round(u_done / u_tasks * 100, 1) if u_tasks > 0 else 0.0
+
         member_workloads.append(MemberWorkload(
             user_id=u.id,
             name=u.nickname,
             avatar=u.avatar or f"https://api.dicebear.com/7.x/avataaars/svg?seed={u.username}",
             task_count=u_tasks,
-            logged_hours=round(float(u_hours), 1),
+            logged_hours=round(u_hours, 1),
             completion_rate=comp_rate
         ))
 

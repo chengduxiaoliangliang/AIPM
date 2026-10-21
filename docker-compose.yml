@@ -5,6 +5,8 @@ services:
     image: mysql:8.0
     container_name: aipm-mysql
     restart: unless-stopped
+    mem_limit: 768m
+    cpus: 0.80
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -36,6 +38,8 @@ services:
     image: redis:7-alpine
     container_name: aipm-redis
     restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.50
     command:
       - redis-server
       - --requirepass
@@ -67,6 +71,8 @@ services:
       context: ./backend
     container_name: aipm-backend
     restart: unless-stopped
+    mem_limit: 896m
+    cpus: 1.50
     env_file:
       - .env
     environment:
@@ -93,6 +99,8 @@ services:
       context: ./frontend
     container_name: aipm-frontend
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.50
     depends_on:
       backend:
         condition: service_healthy

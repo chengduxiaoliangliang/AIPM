@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: 前端类型检查与构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # --frozen-lockfile：package.json 与锁文件不一致时直接失败，
+      # 避免"本地能跑、镜像里装不上"（这个坑踩过一次）
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm exec vue-tsc --noEmit
+
+      - name: 构建
+        run: pnpm exec vite build
+
+  backend:
+    name: 后端语法与导入检查
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      ENV: development
+      SECRET_KEY: ci-only-secret-key-do-not-use-in-production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 编译检查
+        run: python -m compileall -q app scripts
+
+      # 能 import 才说明没有循环导入、没有缺依赖
+      - name: 导入检查
+        run: python -c "import app.main; print('OK: app imported')"
+
+  smoke:
+    name: 容器冒烟与权限回归
+    runs-on: ubuntu-latest
+    needs: [frontend, backend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 生成 CI 用 .env
+        run: |
+          cat > .env <<'EOF'
+          ENV=development
+          DEBUG=false
+          PROJECT_NAME=AIPM
+          MYSQL_HOST=mysql
+          MYSQL_PORT=3306
+          MYSQL_USER=aipm
+          MYSQL_PASSWORD=ci-mysql-password
+          MYSQL_ROOT_PASSWORD=ci-root-password
+          MYSQL_DB=aipm_db
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          REDIS_PASSWORD=ci-redis-password
+          REDIS_DB=0
+          SECRET_KEY=ci-only-secret-key-do-not-use-in-production
+          ACCESS_TOKEN_EXPIRE_MINUTES=1440
+          AI_ENABLED=false
+          DEEPSEEK_API_KEY=
+          BACKEND_CORS_ORIGINS=*
+          KB_LINT_ENABLED=false
+          KB_NOTIFY_ENABLED=false
+          LOGIN_MAX_ATTEMPTS=5
+          LOGIN_LOCKOUT_MINUTES=15
+          EOF
+
+      - name: 启动服务
+        run: docker compose up -d --build
+
+      - name: 等待就绪
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1/health > /dev/null; then
+              echo "服务已就绪（第 ${i} 次探测）"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "启动超时，输出容器日志："
+          docker compose logs --tail=100
+          exit 1
+
+      # 权限矩阵不依赖大模型，可以在没有 API Key 的 CI 里跑
+      - name: 权限回归检查
+        run: |
+          docker exec aipm-backend python scripts/kb_permission_check.py \
+            --base-url http://127.0.0.1:8000/api/v1
+
+      - name: 失败时导出日志
+        if: failure()
+        run: docker compose logs --tail=150
+
+      - name: 清理
+        if: always()
+        run: docker compose down -v

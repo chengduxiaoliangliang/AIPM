@@ -156,7 +156,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, nextTick, computed } from 'vue'
+import { ref, reactive, onMounted, nextTick, computed, defineAsyncComponent } from 'vue'
 import { useUserStore } from '@/store/modules/user'
 import {
   getAICapabilitiesApi, createSessionApi, streamAIChatApi,
@@ -164,7 +164,10 @@ import {
 } from '@/api/ai'
 import { Delete, Minus, Promotion, Loading } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
-import AetherSpriteCanvas from '@/components/AetherSprite/AetherSpriteCanvas.vue'
+// three.js 约 500KB，只为右下角这个装饰性精灵。异步加载，不拖首屏。
+const AetherSpriteCanvas = defineAsyncComponent(
+  () => import('@/components/AetherSprite/AetherSpriteCanvas.vue')
+)
 
 const md = new MarkdownIt({
   html: false,
@@ -177,7 +180,7 @@ const isOpen = ref(false)
 const hasOpenedOnce = ref(false)
 const spriteState = ref<'idle' | 'curious' | 'thinking' | 'typing' | 'bouncy'>('idle')
 const isHovered = ref(false)
-const sprite3DRef = ref<InstanceType<typeof AetherSpriteCanvas>>()
+const sprite3DRef = ref<any>()
 const capabilities = ref<AICapabilities | null>(null)
 const messagesContainerRef = ref<HTMLElement>()
 const currentSessionId = ref<string | null>(null)

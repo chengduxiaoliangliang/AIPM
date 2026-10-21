@@ -505,7 +505,12 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import MarkdownIt from 'markdown-it'
-import * as echarts from 'echarts'
+import * as echarts from 'echarts/core'
+import { GraphChart } from 'echarts/charts'
+import { LegendComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+
+echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listRolesApi } from '@/api/user'
 import type { Role } from '@/types'

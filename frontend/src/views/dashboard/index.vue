@@ -164,7 +164,21 @@
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch } from 'vue'
-import * as echarts from 'echarts'
+// 按需引入：全量 import 会把 1MB 的 echarts 打进包里
+import * as echarts from 'echarts/core'
+// 加前缀避免与 Element 图标 PieChart 重名
+import { BarChart as EBarChart, LineChart as ELineChart, PieChart as EPieChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+
+// 类型从完整包引入，仅参与编译、不进产物
+import type { EChartsOption } from 'echarts'
+
+echarts.use([
+  EBarChart, ELineChart, EPieChart,
+  GridComponent, LegendComponent, TooltipComponent,
+  CanvasRenderer
+])
 
 /** 图表配色跟随 CSS 变量，暗色模式自动适配 */
 const CHART_COLORS = ['#2f54e8', '#0f9d58', '#d97706', '#7c3aed', '#0891b2']
@@ -221,7 +235,7 @@ function renderTrendChart() {
   const completed = stats.value.monthly_trends.map((m) => m.completed_tasks)
   const hours = stats.value.monthly_trends.map((m) => m.logged_hours)
 
-  const option: echarts.EChartsOption = {
+  const option: EChartsOption = {
     tooltip: { trigger: 'axis' },
     legend: {
       data: trendType.value === 'task' ? ['创建任务数', '完成任务数'] : ['投入工时 (小时)'],
@@ -307,7 +321,7 @@ function renderStatusChart() {
     value: d.count
   }))
 
-  const option: echarts.EChartsOption = {
+  const option: EChartsOption = {
     color: CHART_COLORS,
     tooltip: { trigger: 'item' },
     legend: {

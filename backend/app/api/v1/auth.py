@@ -14,6 +14,7 @@ from app.schemas.auth import (
 from app.core.security import verify_password, create_access_token, get_password_hash, needs_rehash
 from app.core.exceptions import UnauthorizedException
 from app.core.captcha import SliderCaptchaService
+from app.services import login_throttle
 from app.api.deps import get_current_user
 from app.redis_client import redis_client
 
@@ -61,18 +62,37 @@ def verify_slider_captcha(verify_req: SliderVerifyRequest):
 
 @router.post("/login", response_model=ResponseModel[Dict[str, Any]])
 def login(request: Request, login_data: LoginRequest, db: Session = Depends(get_db)):
+    client_ip = request.client.host if request.client else "unknown"
+
+    # 服务端限流：验证码只在客户端，直接打 API 可以绕过它
+    wait = login_throttle.locked_for(login_data.username, client_ip)
+    if wait:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": 429,
+                "message": f"登录尝试过于频繁，请 {wait} 秒后再试",
+            },
+        )
+
     # Validate sliding captcha token if provided
+    captcha_ok = False
     if login_data.captcha_token:
         is_valid_captcha = SliderCaptchaService.validate_captcha_token(login_data.captcha_token)
         if not is_valid_captcha:
             raise HTTPException(status_code=400, detail={"code": 400, "message": "滑块验证码已失效，请重新验证"})
+        captcha_ok = True
 
     user = db.query(User).filter(User.username == login_data.username).first()
     if not user or not verify_password(login_data.password, user.password_hash):
+        login_throttle.record_failure(login_data.username, client_ip)
         raise UnauthorizedException("用户名或密码错误")
     
     if not user.status:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": 403, "message": "该账号已被禁用"})
+
+    # 登录成功，清空失败计数
+    login_throttle.reset(login_data.username, client_ip)
 
     # Transparently upgrade legacy SHA256 hashes to bcrypt on successful login
     if needs_rehash(user.password_hash):
@@ -86,7 +106,6 @@ def login(request: Request, login_data: LoginRequest, db: Session = Depends(get_
     token = create_access_token(subject=user.username, expires_delta=access_token_expires)
 
     # Record login audit log
-    client_ip = request.client.host if request.client else "unknown"
     audit = AuditLog(
         user_id=user.id,
         username=user.username,
@@ -96,7 +115,10 @@ def login(request: Request, login_data: LoginRequest, db: Session = Depends(get_
         path="/api/v1/auth/login",
         ip=client_ip,
         status_code=200,
-        details=f"用户 {user.nickname}({user.username}) 成功登录系统 (已通过滑块人机验证)"
+        details=(
+            f"用户 {user.nickname}({user.username}) 成功登录系统"
+            + ("（已通过滑块人机验证）" if captcha_ok else "（未携带验证码，仅密码校验）")
+        )
     )
     db.add(audit)
     db.commit()
