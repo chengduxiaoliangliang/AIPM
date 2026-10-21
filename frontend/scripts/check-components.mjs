@@ -74,11 +74,19 @@ console.log(`main.ts 全局注册 ${globals.size} 个组件`)
 const problems = []
 for (const file of walk(SRC).filter((f) => f.endsWith('.vue'))) {
   const src = fs.readFileSync(file, 'utf-8')
-  const template = src.split('</template>')[0]
+  // 不能按第一个 </template> 切：<el-upload> 等组件内部有 <template #slot>，
+  // 会把模板截断，导致后面的标签全部漏检（假绿灯）。
+  const scriptIdx = src.search(/<script[\s>]/)
+  const template = scriptIdx > 0 ? src.slice(0, scriptIdx) : src
   const local = localImports(src)
 
   const tags = new Set()
+  // PascalCase：图标与应用内组件
   for (const m of template.matchAll(/<([A-Z][A-Za-z0-9]*)[\s/>]/g)) tags.add(m[1])
+  // el-xxx：Element Plus 组件，转成 ElXxx 再比对
+  for (const m of template.matchAll(/<el-([a-z][a-z0-9-]*)[\s/>]/g)) {
+    tags.add('El' + m[1].split('-').map((p) => p[0].toUpperCase() + p.slice(1)).join(''))
+  }
 
   for (const tag of tags) {
     if (local.has(tag) || globals.has(tag)) continue

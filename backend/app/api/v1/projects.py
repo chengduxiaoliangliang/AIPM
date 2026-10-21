@@ -1,5 +1,10 @@
-from typing import List, Optional
-from fastapi import APIRouter, Depends, Query
+import io
+import json
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.database import get_db
@@ -14,6 +19,7 @@ from app.schemas.project import (
 )
 from app.core.exceptions import NotFoundException, CustomException
 from app.api.deps import get_current_user, PermissionChecker
+from app.services import project_io
 
 router = APIRouter()
 
@@ -119,6 +125,122 @@ def get_all_projects(
             updated_at=p.updated_at
         ))
     return ResponseModel(code=200, message="success", data=items)
+
+# ─── 导入 / 导出 ─────────────────────────────────────────────────────────────
+# 注意：这些路由必须定义在 /{project_id} 之前，否则 "import" 会被当成 project_id。
+
+def _xlsx_response(data: bytes, filename: str) -> StreamingResponse:
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename*=UTF-8''{quote(filename)}"
+            )
+        },
+    )
+
+
+@router.get("/import/template")
+def download_import_template(
+    current_user: User = Depends(get_current_user),
+):
+    """下载导入模板（含示例行与填写说明）。"""
+    return _xlsx_response(project_io.build_template(), "项目导入模板.xlsx")
+
+
+@router.post("/import/preview", response_model=ResponseModel[Dict[str, Any]])
+async def preview_import(
+    file: UploadFile = File(...),
+    mapping: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """解析上传文件：返回识别到的列、自动映射、样例行与校验问题。
+
+    不写库。`mapping` 可选，格式 {"project": {"0": "name"}, "task": {...}}，
+    用于覆盖自动映射。
+    """
+    raw = await file.read()
+    overrides = None
+    if mapping:
+        try:
+            overrides = json.loads(mapping)
+        except Exception:
+            raise CustomException(message="mapping 参数不是合法 JSON")
+
+    try:
+        parsed = project_io.parse_import(raw, file.filename or "", overrides)
+    except ValueError as exc:
+        raise CustomException(message=str(exc))
+
+    rows = parsed.pop("rows")
+    issues = project_io.validate_rows(db, rows["project"], rows["task"])
+    parsed["issues"] = parsed["issues"] + issues
+    parsed["summary"] = {
+        "projects": len(rows["project"]),
+        "tasks": len(rows["task"]),
+        "errors": sum(1 for i in parsed["issues"] if i["level"] == "error"),
+        "warnings": sum(1 for i in parsed["issues"] if i["level"] == "warning"),
+    }
+    return ResponseModel(code=200, message="success", data=parsed)
+
+
+@router.post("/import/execute", response_model=ResponseModel[Dict[str, Any]])
+async def execute_import(
+    file: UploadFile = File(...),
+    mapping: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """执行导入。存在 error 级问题时拒绝写入。"""
+    raw = await file.read()
+    overrides = None
+    if mapping:
+        try:
+            overrides = json.loads(mapping)
+        except Exception:
+            raise CustomException(message="mapping 参数不是合法 JSON")
+
+    try:
+        parsed = project_io.parse_import(raw, file.filename or "", overrides)
+    except ValueError as exc:
+        raise CustomException(message=str(exc))
+
+    rows = parsed["rows"]
+    issues = project_io.validate_rows(db, rows["project"], rows["task"])
+    errors = [i for i in issues if i["level"] == "error"]
+    if errors:
+        return ResponseModel(
+            code=400,
+            message=f"存在 {len(errors)} 处错误，未导入任何数据",
+            data={"issues": errors[:50]},
+        )
+
+    result = project_io.execute_import(db, rows["project"], rows["task"], current_user)
+    return ResponseModel(
+        code=200,
+        message=(
+            f"导入完成：新增 {result['projects_created']} 个项目、"
+            f"{result['tasks_created']} 个任务"
+        ),
+        data={**result, "warnings": [i for i in issues if i["level"] == "warning"][:50]},
+    )
+
+
+@router.get("/{project_id}/export")
+def export_project_xlsx(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """导出项目及其任务为 xlsx，格式与导入模板一致，可直接再次导入。"""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise NotFoundException("项目不存在")
+    data = project_io.export_project(db, project)
+    return _xlsx_response(data, f"{project.code}-{project.name}.xlsx")
+
 
 @router.get("/{project_id}", response_model=ResponseModel[ProjectDetailOut])
 def get_project_detail(

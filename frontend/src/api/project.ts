@@ -1,4 +1,4 @@
-import request from './request'
+import request, { http } from './request'
 import type { Project, ProjectMember, Milestone, PaginatedData } from '@/types'
 
 export interface ProjectDetail extends Project {
@@ -86,5 +86,88 @@ export function deleteMilestoneApi(projectId: number, milestoneId: number) {
   return request<null>({
     url: `/projects/${projectId}/milestones/${milestoneId}`,
     method: 'DELETE'
+  })
+}
+
+// ─── 项目导入 / 导出 ─────────────────────────────────────────────────────────
+
+export interface ImportField {
+  key: string
+  label: string
+  required: boolean
+}
+
+export interface ImportIssue {
+  level: 'error' | 'warning'
+  sheet: string
+  row: number
+  field?: string
+  message: string
+}
+
+export interface ImportSheetMeta {
+  headers: string[]
+  /** 列下标 → 字段 key */
+  mapping: Record<string, string>
+  header_row: number
+  rows: Record<string, any>[]
+  total: number
+}
+
+export interface ImportPreview {
+  sheets: { project: ImportSheetMeta; task: ImportSheetMeta }
+  fields: { project: ImportField[]; task: ImportField[] }
+  issues: ImportIssue[]
+  summary: { projects: number; tasks: number; errors: number; warnings: number }
+}
+
+export interface ImportResult {
+  projects_created: number
+  projects_skipped: number
+  tasks_created: number
+  tasks_skipped: number
+  warnings?: ImportIssue[]
+}
+
+export async function downloadProjectTemplateApi(): Promise<Blob> {
+  const res = await http.get('/projects/import/template', {
+    responseType: 'blob',
+    timeout: 60000
+  })
+  return res.data as Blob
+}
+
+export async function exportProjectApi(projectId: number): Promise<Blob> {
+  const res = await http.get(`/projects/${projectId}/export`, {
+    responseType: 'blob',
+    timeout: 60000
+  })
+  return res.data as Blob
+}
+
+function buildImportForm(file: File, mapping?: Record<string, any>): FormData {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (mapping) fd.append('mapping', JSON.stringify(mapping))
+  return fd
+}
+
+export function previewProjectImportApi(file: File, mapping?: Record<string, any>) {
+  return request<ImportPreview>({
+    url: '/projects/import/preview',
+    method: 'POST',
+    data: buildImportForm(file, mapping),
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  })
+}
+
+export function executeProjectImportApi(file: File, mapping?: Record<string, any>) {
+  return request<ImportResult>({
+    url: '/projects/import/execute',
+    method: 'POST',
+    data: buildImportForm(file, mapping),
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 180000
   })
 }

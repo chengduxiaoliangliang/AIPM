@@ -13,6 +13,7 @@ import pinia from './store'
 import 'element-plus/dist/index.css'
 import {
   ElLoading,
+  ElAlert,
   ElAvatar, ElBadge, ElBreadcrumb, ElBreadcrumbItem,
   ElButton, ElButtonGroup, ElCheckbox, ElCheckboxGroup,
   ElCol, ElConfigProvider, ElDatePicker, ElDialog,
@@ -50,6 +51,7 @@ const app = createApp(App)
 
 // 用变量名作为组件名注册，避免依赖各组件内部的 name 字段
 const components: Record<string, any> = {
+  ElAlert,
   ElAvatar,
   ElBadge,
   ElBreadcrumb,

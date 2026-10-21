@@ -9,11 +9,11 @@
             placeholder="项目名称 / 标识 / 描述"
             clearable
             @keyup.enter="handleSearch"
-            style="width: 200px"
+            style="width: 170px"
           />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="queryForm.status" placeholder="全部状态" clearable style="width: 130px">
+          <el-select v-model="queryForm.status" placeholder="全部状态" clearable style="width: 116px">
             <el-option label="规划中" value="planning" />
             <el-option label="进行中" value="in_progress" />
             <el-option label="测试中" value="testing" />
@@ -22,7 +22,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="优先级">
-          <el-select v-model="queryForm.priority" placeholder="全部优先级" clearable style="width: 130px">
+          <el-select v-model="queryForm.priority" placeholder="全部优先级" clearable style="width: 116px">
             <el-option label="紧急" value="urgent" />
             <el-option label="高" value="high" />
             <el-option label="中" value="medium" />
@@ -41,6 +41,7 @@
           <el-radio-button label="table"><el-icon><List /></el-icon></el-radio-button>
         </el-radio-group>
 
+        <el-button :icon="Download" @click="importRef?.open()">导入项目</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreateDrawer">创建项目</el-button>
       </div>
     </div>
@@ -148,10 +149,11 @@
             <div style="font-size: 12px">{{ row.start_date || '未设置' }} 至 {{ row.end_date || '未设置' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right" align="center">
+        <el-table-column label="操作" width="200" fixed="right" align="center">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="goToDetail(row.id)">详情</el-button>
             <el-button link type="primary" size="small" @click="openEditDrawer(row)">编辑</el-button>
+            <el-button link type="primary" size="small" @click="handleExport(row)">导出</el-button>
             <el-button link type="danger" size="small" @click="handleDelete(row.id)">删除</el-button>
           </template>
         </el-table-column>
@@ -291,6 +293,8 @@
         </div>
       </template>
     </el-drawer>
+
+  <ImportDialog ref="importRef" @done="loadProjects" />
   </div>
 </template>
 
@@ -300,6 +304,9 @@ import { useRouter } from 'vue-router'
 import { listProjectsApi, createProjectApi, updateProjectApi, deleteProjectApi } from '@/api/project'
 import { getAllUsersApi } from '@/api/user'
 import StatusTag from '@/components/StatusTag.vue'
+import ImportDialog from './ImportDialog.vue'
+import { exportProjectApi } from '@/api/project'
+import { saveBlob } from '@/utils/download'
 import type { Project, UserInfo } from '@/types'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import {
@@ -309,12 +316,14 @@ import {
   Grid,
   List,
   User,
-  Checked
+  Checked,
+  Download
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
 
 const loading = ref(false)
+const importRef = ref<InstanceType<typeof ImportDialog>>()
 const viewMode = ref<'card' | 'table'>('card')
 const projects = ref<Project[]>([])
 const total = ref(0)
@@ -381,6 +390,16 @@ function handleReset() {
   queryForm.priority = ''
   queryForm.page = 1
   loadProjects()
+}
+
+async function handleExport(row: Project) {
+  try {
+    const blob = await exportProjectApi(row.id)
+    saveBlob(blob, `${row.code}-${row.name}.xlsx`)
+    ElMessage.success('已导出，可直接用导入功能再导入')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '导出失败')
+  }
 }
 
 function goToDetail(id: number) {
@@ -466,6 +485,38 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
+
+/* 筛选区与动作区保持单行：靠收紧间距而不是让表单折行 */
+.filter-form {
+  flex: 1 1 auto;
+  min-width: 0;
+
+  :deep(.el-form-item) {
+    margin-right: 14px;
+    margin-bottom: 0;
+  }
+}
+
+/* 工具栏右侧动作区：项目多/窗口窄时允许换行，但按钮本身不压缩 */
+.action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 不参与压缩：宁可让筛选区换行，也不要按钮被挤成两行 */
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  white-space: nowrap;
+
+  :deep(.el-button) {
+    margin-left: 0;
+    flex-shrink: 0;
+  }
+
+  :deep(.el-radio-group) {
+    flex-shrink: 0;
+  }
+}
+
 .project-list-page {
   .project-cards-grid {
     .project-card {
