@@ -41,7 +41,21 @@
           <el-radio-button label="table"><el-icon><List /></el-icon></el-radio-button>
         </el-radio-group>
 
-        <el-button :icon="Download" @click="importRef?.open()">导入项目</el-button>
+        <el-dropdown trigger="click" @command="handleIoCommand">
+          <el-button :icon="Download">
+            导入 / 导出
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="import">导入项目</el-dropdown-item>
+              <el-dropdown-item command="exportSelected" :disabled="!selectedRows.length">
+                导出选中{{ selectedRows.length ? ` (${selectedRows.length})` : '' }}
+              </el-dropdown-item>
+              <el-dropdown-item command="exportAll" divided>导出全部</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button type="primary" :icon="Plus" @click="openCreateDrawer">创建项目</el-button>
       </div>
     </div>
@@ -106,7 +120,13 @@
 
     <!-- Table View Mode -->
     <div v-else class="table-card" v-loading="loading">
-      <el-table :data="projects" stripe style="width: 100%">
+      <el-table
+        :data="projects"
+        stripe
+        style="width: 100%"
+        @selection-change="onSelectionChange"
+      >
+        <el-table-column type="selection" width="44" reserve-selection />
         <el-table-column prop="name" label="项目名称" min-width="180">
           <template #default="{ row }">
             <el-link type="primary" :underline="false" @click="goToDetail(row.id)">
@@ -305,7 +325,7 @@ import { listProjectsApi, createProjectApi, updateProjectApi, deleteProjectApi }
 import { getAllUsersApi } from '@/api/user'
 import StatusTag from '@/components/StatusTag.vue'
 import ImportDialog from './ImportDialog.vue'
-import { exportProjectApi } from '@/api/project'
+import { exportProjectApi, exportProjectsApi } from '@/api/project'
 import { saveBlob } from '@/utils/download'
 import type { Project, UserInfo } from '@/types'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
@@ -317,13 +337,48 @@ import {
   List,
   User,
   Checked,
-  Download
+  Download,
+  ArrowDown
 } from '@element-plus/icons-vue'
 
 const router = useRouter()
 
 const loading = ref(false)
 const importRef = ref<InstanceType<typeof ImportDialog>>()
+const selectedRows = ref<Project[]>([])
+
+function onSelectionChange(rows: Project[]) {
+  selectedRows.value = rows
+}
+
+async function handleIoCommand(cmd: string) {
+  if (cmd === 'import') importRef.value?.open()
+  else if (cmd === 'exportSelected') await handleExportSelected()
+  else if (cmd === 'exportAll') await handleExportAll()
+}
+
+async function handleExportAll() {
+  try {
+    const blob = await exportProjectsApi([])
+    const stamp = new Date().toISOString().slice(0, 10)
+    saveBlob(blob, `项目导出-全部-${stamp}.xlsx`)
+    ElMessage.success('已导出全部项目')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '导出失败')
+  }
+}
+
+async function handleExportSelected() {
+  if (!selectedRows.value.length) return
+  try {
+    const blob = await exportProjectsApi(selectedRows.value.map((r) => r.id))
+    const stamp = new Date().toISOString().slice(0, 10)
+    saveBlob(blob, `项目导出-${selectedRows.value.length}个-${stamp}.xlsx`)
+    ElMessage.success(`已导出 ${selectedRows.value.length} 个项目`)
+  } catch (e: any) {
+    ElMessage.error(e?.message || '导出失败')
+  }
+}
 const viewMode = ref<'card' | 'table'>('card')
 const projects = ref<Project[]>([])
 const total = ref(0)

@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import csv
 import io
 import re
 from datetime import date, datetime, timedelta
@@ -305,6 +306,162 @@ def _field_hint(key: str, kind: str) -> str:
     return hints.get(key, "")
 
 
+# ─── CSV ─────────────────────────────────────────────────────────────────────
+# CSV 只有一张表，用「类型」列区分项目行与任务行：
+#   类型=项目 → 用 项目编号/项目名称/项目状态/项目优先级/预算/项目日期
+#   类型=任务 → 用 项目编号/任务标题/任务状态/任务优先级/任务类型/工时/任务日期
+# 负责人对项目是 owner，对任务是 assignee，按行类型解释。
+# 这样一张表就能表达完整结构，也方便从其他系统（Jira/禅道）直接导出改列名。
+
+CSV_COLUMNS: List[Tuple[str, List[str]]] = [
+    ("record_type", ["类型", "记录类型", "type"]),
+    ("project_code", ["项目编号", "编号", "项目代号", "project code"]),
+    ("project_name", ["项目名称", "project name"]),
+    ("project_status", ["项目状态", "project status"]),
+    ("project_priority", ["项目优先级", "project priority"]),
+    ("project_budget", ["预算", "项目预算", "budget"]),
+    ("project_start", ["项目开始日期", "开始日期"]),
+    ("project_end", ["项目结束日期", "结束日期"]),
+    ("task_title", ["任务标题", "任务名称", "标题", "task"]),
+    ("task_status", ["任务状态", "task status"]),
+    ("task_priority", ["任务优先级", "task priority"]),
+    ("task_type", ["任务类型", "类型细分", "task type"]),
+    ("task_estimate", ["预估工时", "工时", "estimate"]),
+    ("task_start", ["任务开始日期"]),
+    ("task_due", ["任务截止日期", "截止日期", "due"]),
+    ("owner", ["负责人", "指派人", "owner", "assignee"]),
+    ("tags", ["标签", "tags"]),
+    ("description", ["描述", "说明", "description"]),
+]
+
+CSV_HEADERS = [
+    "类型", "项目编号", "项目名称", "项目状态", "项目优先级", "预算",
+    "项目开始日期", "项目结束日期", "任务标题", "任务状态", "任务优先级",
+    "任务类型", "预估工时", "任务开始日期", "任务截止日期",
+    "负责人", "标签", "描述",
+]
+
+CSV_SAMPLES = [
+    ["项目", "DEMO-2026", "示例：客户门户重构", "进行中", "高", 120000,
+     "2026-03-01", "2026-06-30", "", "", "", "", "", "", "", "admin", "", "示例项目行，导入前请删除"],
+    ["任务", "DEMO-2026", "", "", "", "",
+     "", "", "示例：登录页改版", "进行中", "高",
+     "需求", 16, "2026-03-01", "2026-03-15", "zhangsan", "前端,UI", "示例任务行，导入前请删除"],
+]
+
+
+def build_csv_template() -> bytes:
+    """生成 CSV 模板（UTF-8 BOM，Excel 直接打开不乱码）。"""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(CSV_HEADERS)
+    for row in CSV_SAMPLES:
+        writer.writerow(row)
+    # BOM：不加的话 Excel 打开中文会乱码
+    return ("\ufeff" + buf.getvalue()).encode("utf-8")
+
+
+def _decode_text(raw: bytes) -> str:
+    for enc in ("utf-8-sig", "utf-8", "gbk", "gb18030"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("无法识别文件编码，请另存为 UTF-8 或 GBK 后重试")
+
+
+def _parse_csv(raw: bytes) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    """把单表 CSV 拆成 项目行 / 任务行，结构与 xlsx 解析结果保持一致。"""
+    text = _decode_text(raw)
+    reader = csv.DictReader(io.StringIO(text))
+    headers = [h.strip() for h in (reader.fieldnames or [])]
+    if not headers:
+        raise ValueError("CSV 文件没有表头")
+
+    # 表头 → 内部列 key
+    alias: Dict[str, str] = {}
+    for key, names in CSV_COLUMNS:
+        for n in names:
+            alias[_norm(n)] = key
+
+    col_of: Dict[str, str] = {}
+    for h in headers:
+        key = alias.get(_norm(h))
+        if key and key not in col_of:
+            col_of[key] = h
+
+    if "record_type" not in col_of:
+        # 没有类型列时按任务处理，但要求有任务标题
+        if "task_title" not in col_of:
+            raise ValueError("CSV 缺少「类型」列，且找不到「任务标题」列")
+
+    proj_rows: List[Dict[str, Any]] = []
+    task_rows: List[Dict[str, Any]] = []
+
+    for idx, raw_row in enumerate(reader, start=2):
+        row = {(k or "").strip(): (v or "").strip() for k, v in raw_row.items() if k}
+        if not any(row.values()):
+            continue
+
+        kind = row.get(col_of.get("record_type", ""), "").strip().lower()
+        is_project = kind in ("项目", "project", "p")
+
+        if is_project:
+            proj_rows.append({
+                "_row": idx,
+                "code": row.get(col_of.get("project_code", ""), ""),
+                "name": row.get(col_of.get("project_name", ""), ""),
+                "owner": row.get(col_of.get("owner", ""), ""),
+                "status": row.get(col_of.get("project_status", ""), ""),
+                "priority": row.get(col_of.get("project_priority", ""), ""),
+                "budget": row.get(col_of.get("project_budget", ""), ""),
+                "start_date": row.get(col_of.get("project_start", ""), ""),
+                "end_date": row.get(col_of.get("project_end", ""), ""),
+                "description": row.get(col_of.get("description", ""), ""),
+            })
+        else:
+            task_rows.append({
+                "_row": idx,
+                "project_code": row.get(col_of.get("project_code", ""), ""),
+                "title": row.get(col_of.get("task_title", ""), ""),
+                "assignee": row.get(col_of.get("owner", ""), ""),
+                "status": row.get(col_of.get("task_status", ""), ""),
+                "priority": row.get(col_of.get("task_priority", ""), ""),
+                "task_type": row.get(col_of.get("task_type", ""), ""),
+                "estimated_hours": row.get(col_of.get("task_estimate", ""), ""),
+                "start_date": row.get(col_of.get("task_start", ""), ""),
+                "due_date": row.get(col_of.get("task_due", ""), ""),
+                "tags": row.get(col_of.get("tags", ""), ""),
+                "description": row.get(col_of.get("description", ""), ""),
+            })
+
+    # CSV 是一张表，但校验按「项目表 / 任务表」两套字段分别做，
+    # 所以映射也要按两套字段 key 输出，否则必填列检查会失效。
+    PROJ_KEY = {
+        "project_name": "name", "project_code": "code", "owner": "owner",
+        "project_status": "status", "project_priority": "priority",
+        "project_budget": "budget", "project_start": "start_date",
+        "project_end": "end_date", "description": "description",
+    }
+    TASK_KEY = {
+        "project_code": "project_code", "task_title": "title", "owner": "assignee",
+        "task_status": "status", "task_priority": "priority",
+        "task_type": "task_type", "task_estimate": "estimated_hours",
+        "task_start": "start_date", "task_due": "due_date",
+        "tags": "tags", "description": "description",
+    }
+
+    def build_meta(key_map):
+        mapping = {}
+        for i, h in enumerate(headers):
+            internal = alias.get(_norm(h))
+            if internal and internal in key_map and key_map[internal] not in mapping.values():
+                mapping[str(i)] = key_map[internal]
+        return {"headers": headers, "mapping": mapping, "header_row": 1}
+
+    return proj_rows, task_rows, build_meta(PROJ_KEY), build_meta(TASK_KEY)
+
+
 # ─── 解析与校验 ──────────────────────────────────────────────────────────────
 
 def _read_sheet(
@@ -371,8 +528,16 @@ def parse_import(
     if len(file_bytes) > MAX_BYTES:
         raise ValueError(f"文件过大，最大 {MAX_BYTES // 1024 // 1024}MB")
 
-    if not filename.lower().endswith((".xlsx", ".xlsm")):
-        raise ValueError("仅支持 .xlsx 格式，请用下载的模板填写")
+    name = (filename or "").lower()
+
+    if name.endswith(".csv"):
+        proj_rows, task_rows, proj_meta, task_meta = _parse_csv(file_bytes)
+        if len(proj_rows) > MAX_ROWS or len(task_rows) > MAX_ROWS:
+            raise ValueError(f"单次导入最多 {MAX_ROWS} 行")
+        return _build_result(proj_rows, task_rows, proj_meta, task_meta, "csv")
+
+    if not name.endswith((".xlsx", ".xlsm")):
+        raise ValueError("仅支持 .xlsx 或 .csv 格式，请用下载的模板填写")
 
     try:
         wb = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
@@ -404,6 +569,17 @@ def parse_import(
     if len(proj_rows) > MAX_ROWS or len(task_rows) > MAX_ROWS:
         raise ValueError(f"单次导入最多 {MAX_ROWS} 行")
 
+    return _build_result(proj_rows, task_rows, proj_meta, task_meta, "xlsx")
+
+
+def _build_result(
+    proj_rows: List[Dict[str, Any]],
+    task_rows: List[Dict[str, Any]],
+    proj_meta: Dict[str, Any],
+    task_meta: Dict[str, Any],
+    fmt: str,
+) -> Dict[str, Any]:
+    """把解析结果整理成对外结构（含必填列检查）。"""
     issues: List[Dict[str, Any]] = []
 
     # 必填列是否被识别
@@ -421,6 +597,7 @@ def parse_import(
                 })
 
     return {
+        "format": fmt,
         "sheets": {
             "project": {"rows": proj_rows[:5], "total": len(proj_rows), **proj_meta},
             "task": {"rows": task_rows[:5], "total": len(task_rows), **task_meta},
@@ -638,32 +815,34 @@ def execute_import(
 
 # ─── 导出 ────────────────────────────────────────────────────────────────────
 
-def export_project(db: Session, project: Project) -> bytes:
-    """导出单个项目（项目 1 行 + 其全部任务），表头与模板一致，可再次导入。"""
+def export_projects(db: Session, projects: List[Project]) -> bytes:
+    """导出若干项目为一个工作簿：项目表每个项目一行，任务表汇总所有任务。
+
+    表头与导入模板一致，导出的文件可以直接再导入（多项目也能一次导回）。
+    """
     wb = Workbook()
+
     ws = wb.active
     ws.title = SHEET_PROJECT
     _style_sheet(
         ws,
         [f["label"] + ("*" if f["required"] else "") for f in PROJECT_FIELDS],
         [22, 16, 12, 10, 10, 12, 12, 12, 36],
-        [[
-            project.name,
-            project.code,
-            project.owner.username if project.owner else "",
-            PROJECT_STATUS_LABEL.get(project.status, project.status),
-            PRIORITY_LABEL.get(project.priority, project.priority),
-            project.budget or 0,
-            project.start_date.strftime("%Y-%m-%d") if project.start_date else "",
-            project.end_date.strftime("%Y-%m-%d") if project.end_date else "",
-            project.description or "",
-        ]],
+        [],
     )
+    for p in projects:
+        ws.append([
+            p.name,
+            p.code,
+            p.owner.username if p.owner else "",
+            PROJECT_STATUS_LABEL.get(p.status, p.status),
+            PRIORITY_LABEL.get(p.priority, p.priority),
+            p.budget or 0,
+            p.start_date.strftime("%Y-%m-%d") if p.start_date else "",
+            p.end_date.strftime("%Y-%m-%d") if p.end_date else "",
+            p.description or "",
+        ])
 
-    tasks = (
-        db.query(Task).filter(Task.project_id == project.id)
-        .order_by(Task.order_num.asc(), Task.id.asc()).all()
-    )
     ws = wb.create_sheet(SHEET_TASK)
     _style_sheet(
         ws,
@@ -671,21 +850,34 @@ def export_project(db: Session, project: Project) -> bytes:
         [16, 26, 12, 10, 10, 10, 12, 12, 12, 16, 36],
         [],
     )
-    for t in tasks:
-        ws.append([
-            project.code,
-            t.title,
-            t.assignee.username if t.assignee else "",
-            TASK_STATUS_LABEL.get(t.status, t.status),
-            PRIORITY_LABEL.get(t.priority, t.priority),
-            TASK_TYPE_LABEL.get(t.task_type, t.task_type),
-            t.estimated_hours or 0,
-            t.start_date.strftime("%Y-%m-%d") if t.start_date else "",
-            t.due_date.strftime("%Y-%m-%d") if t.due_date else "",
-            t.tags or "",
-            t.description or "",
-        ])
+
+    if projects:
+        ids = [p.id for p in projects]
+        code_by_id = {p.id: p.code for p in projects}
+        tasks = (
+            db.query(Task).filter(Task.project_id.in_(ids))
+            .order_by(Task.project_id.asc(), Task.order_num.asc(), Task.id.asc()).all()
+        )
+        for t in tasks:
+            ws.append([
+                code_by_id.get(t.project_id, ""),
+                t.title,
+                t.assignee.username if t.assignee else "",
+                TASK_STATUS_LABEL.get(t.status, t.status),
+                PRIORITY_LABEL.get(t.priority, t.priority),
+                TASK_TYPE_LABEL.get(t.task_type, t.task_type),
+                t.estimated_hours or 0,
+                t.start_date.strftime("%Y-%m-%d") if t.start_date else "",
+                t.due_date.strftime("%Y-%m-%d") if t.due_date else "",
+                t.tags or "",
+                t.description or "",
+            ])
 
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def export_project(db: Session, project: Project) -> bytes:
+    """导出单个项目（项目 1 行 + 其全部任务）。"""
+    return export_projects(db, [project])

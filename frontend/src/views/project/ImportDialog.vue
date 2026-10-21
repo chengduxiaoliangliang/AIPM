@@ -19,25 +19,45 @@
       </div>
 
       <div class="template-row">
-        <el-button :icon="Download" :loading="downloading" @click="downloadTemplate">
-          下载导入模板
+        <el-button :icon="Download" :loading="downloading" @click="downloadTemplate('xlsx')">
+          下载 Excel 模板
         </el-button>
-        <span class="template-tip">建议先用模板填一份，确认列名再批量导入</span>
+        <el-button :icon="Download" :loading="downloading" @click="downloadTemplate('csv')">
+          下载 CSV 模板
+        </el-button>
+        <span class="template-tip">
+          Excel 分「项目/任务」两个表；CSV 用「类型」列区分，适合从其他系统导出
+        </span>
       </div>
 
       <el-upload
         drag
         :auto-upload="false"
         :show-file-list="false"
-        accept=".xlsx,.xlsm"
+        accept=".xlsx,.xlsm,.csv"
         :on-change="onFileChange"
       >
         <el-icon class="upload-icon"><UploadFilled /></el-icon>
         <div class="upload-text">拖拽文件到此处，或<em>点击选择</em></div>
         <template #tip>
-          <div class="upload-tip">仅支持 .xlsx 格式，最大 8MB，单次最多 2000 行</div>
+          <div class="upload-tip">支持 .xlsx / .csv，最大 8MB，单次最多 2000 行</div>
         </template>
       </el-upload>
+
+      <div v-if="history.length" class="history">
+        <div class="history-title">最近导入</div>
+        <div v-for="h in history" :key="h.id" class="history-row">
+          <el-tag size="small" :type="h.status === 'success' ? 'success' : 'danger'" effect="plain">
+            {{ h.status === 'success' ? '成功' : '失败' }}
+          </el-tag>
+          <span class="h-file" :title="h.filename">{{ h.filename }}</span>
+          <span class="h-meta">{{ h.username }} · {{ h.created_at }}</span>
+          <span class="h-count">
+            项目 {{ h.projects_created }}<template v-if="h.projects_skipped">（跳过 {{ h.projects_skipped }}）</template>
+            · 任务 {{ h.tasks_created }}<template v-if="h.tasks_skipped">（跳过 {{ h.tasks_skipped }}）</template>
+          </span>
+        </div>
+      </div>
     </div>
 
     <!-- ── 第二步：预览与校验 ───────────────────────────────────── -->
@@ -65,7 +85,11 @@
         class="alert"
       />
 
-      <el-tabs v-model="activeSheet" class="map-tabs">
+      <div v-if="preview.format === 'csv'" class="csv-note">
+        CSV 按表头自动识别列。如需自定义列名，请对照模板说明调整表头，或改用 Excel 模板。
+      </div>
+
+      <el-tabs v-else v-model="activeSheet" class="map-tabs">
         <el-tab-pane label="项目表" name="project">
           <div class="map-legend">文件中的列 → 对应的系统字段，留空表示忽略该列</div>
           <div class="map-grid">
@@ -113,7 +137,7 @@
         </el-tab-pane>
       </el-tabs>
 
-      <div class="map-actions">
+      <div v-if="preview.format !== 'csv'" class="map-actions">
         <el-button size="small" :loading="loading" @click="revalidate">
           应用映射并重新校验
         </el-button>
@@ -174,7 +198,9 @@ import {
   downloadProjectTemplateApi,
   previewProjectImportApi,
   executeProjectImportApi,
-  type ImportPreview
+  getImportHistoryApi,
+  type ImportPreview,
+  type ImportLogItem
 } from '@/api/project'
 import { saveBlob } from '@/utils/download'
 
@@ -187,6 +213,7 @@ const importing = ref(false)
 const file = ref<File | null>(null)
 const preview = ref<ImportPreview | null>(null)
 const activeSheet = ref<'project' | 'task'>('project')
+const history = ref<ImportLogItem[]>([])
 
 const mappingModel = reactive<{ project: Record<string, string>; task: Record<string, string> }>({
   project: {},
@@ -195,6 +222,16 @@ const mappingModel = reactive<{ project: Record<string, string>; task: Record<st
 
 function open() {
   visible.value = true
+  loadHistory()
+}
+
+async function loadHistory() {
+  try {
+    const res = await getImportHistoryApi(8)
+    history.value = res.data || []
+  } catch {
+    history.value = []
+  }
 }
 
 function reset() {
@@ -221,12 +258,12 @@ function fieldLabel(key: string): string {
   return list.find((f) => f.key === key)?.label || key
 }
 
-async function downloadTemplate() {
+async function downloadTemplate(format: 'xlsx' | 'csv') {
   downloading.value = true
   try {
-    const blob = await downloadProjectTemplateApi()
-    saveBlob(blob, '项目导入模板.xlsx')
-    ElMessage.success('模板已下载')
+    const blob = await downloadProjectTemplateApi(format)
+    saveBlob(blob, `项目导入模板.${format}`)
+    ElMessage.success(`${format === 'csv' ? 'CSV' : 'Excel'} 模板已下载`)
   } catch (e: any) {
     ElMessage.error(e?.message || '模板下载失败')
   } finally {
@@ -237,8 +274,8 @@ async function downloadTemplate() {
 async function onFileChange(uploadFile: any) {
   const raw: File | undefined = uploadFile?.raw
   if (!raw) return
-  if (!/\.(xlsx|xlsm)$/i.test(raw.name)) {
-    ElMessage.warning('仅支持 .xlsx 格式')
+  if (!/\.(xlsx|xlsm|csv)$/i.test(raw.name)) {
+    ElMessage.warning('仅支持 .xlsx 或 .csv 格式')
     return
   }
   file.value = raw
@@ -306,6 +343,7 @@ async function doImport() {
           ? `；跳过 ${d.projects_skipped} 个项目、${d.tasks_skipped} 个任务`
           : '')
     )
+    await loadHistory()
     visible.value = false
     emit('done')
   } catch (e: any) {
@@ -367,6 +405,60 @@ defineExpose({ open })
   em {
     color: var(--primary-color);
     font-style: normal;
+  }
+}
+
+.csv-note {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.history {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color);
+}
+
+.history-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px dashed var(--border-color);
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  .h-file {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-regular);
+  }
+
+  .h-meta {
+    color: var(--text-faint);
+  }
+
+  .h-count {
+    margin-left: auto;
+    color: var(--text-regular);
   }
 }
 

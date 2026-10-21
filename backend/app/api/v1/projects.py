@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models.project import Project, ProjectMember, Milestone
 from app.models.task import Task
 from app.models.user import User
+from app.models.import_log import ImportLog
 from app.schemas.common import ResponseModel, PaginatedData
 from app.schemas.project import (
     ProjectCreate, ProjectUpdate, ProjectOut, ProjectDetailOut,
@@ -143,9 +144,21 @@ def _xlsx_response(data: bytes, filename: str) -> StreamingResponse:
 
 @router.get("/import/template")
 def download_import_template(
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
     current_user: User = Depends(get_current_user),
 ):
-    """下载导入模板（含示例行与填写说明）。"""
+    """下载导入模板。xlsx 为双工作表，csv 为单表（用「类型」列区分项目/任务）。"""
+    if format == "csv":
+        return StreamingResponse(
+            io.BytesIO(project_io.build_csv_template()),
+            media_type="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": (
+                    "attachment; filename*=UTF-8''"
+                    + quote("项目导入模板.csv")
+                )
+            },
+        )
     return _xlsx_response(project_io.build_template(), "项目导入模板.xlsx")
 
 
@@ -210,22 +223,107 @@ async def execute_import(
     rows = parsed["rows"]
     issues = project_io.validate_rows(db, rows["project"], rows["task"])
     errors = [i for i in issues if i["level"] == "error"]
+    warnings = [i for i in issues if i["level"] == "warning"]
+
+    def log(status: str, message: str, result: Optional[Dict[str, Any]] = None):
+        db.add(ImportLog(
+            user_id=current_user.id,
+            username=current_user.username,
+            filename=(file.filename or "")[:255],
+            file_format=parsed.get("format", "xlsx"),
+            projects_created=(result or {}).get("projects_created", 0),
+            projects_skipped=(result or {}).get("projects_skipped", 0),
+            tasks_created=(result or {}).get("tasks_created", 0),
+            tasks_skipped=(result or {}).get("tasks_skipped", 0),
+            error_count=len(errors),
+            warning_count=len(warnings),
+            status=status,
+            message=message[:512],
+        ))
+        db.commit()
+
     if errors:
+        log("failed", f"存在 {len(errors)} 处错误，未导入")
         return ResponseModel(
             code=400,
             message=f"存在 {len(errors)} 处错误，未导入任何数据",
             data={"issues": errors[:50]},
         )
 
-    result = project_io.execute_import(db, rows["project"], rows["task"], current_user)
+    try:
+        result = project_io.execute_import(db, rows["project"], rows["task"], current_user)
+    except Exception as exc:
+        db.rollback()
+        log("failed", f"导入异常：{exc}")
+        raise CustomException(message=f"导入失败：{exc}")
+
+    log("success", "导入成功", result)
     return ResponseModel(
         code=200,
         message=(
             f"导入完成：新增 {result['projects_created']} 个项目、"
             f"{result['tasks_created']} 个任务"
         ),
-        data={**result, "warnings": [i for i in issues if i["level"] == "warning"][:50]},
+        data={**result, "warnings": warnings[:50]},
     )
+
+
+@router.get("/import/history", response_model=ResponseModel[List[Dict[str, Any]]])
+def import_history(
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """最近的导入记录（所有人可见，便于团队内追溯）。"""
+    rows = (
+        db.query(ImportLog)
+        .order_by(ImportLog.created_at.desc(), ImportLog.id.desc())
+        .limit(limit).all()
+    )
+    return ResponseModel(code=200, message="success", data=[{
+        "id": r.id,
+        "username": r.username,
+        "filename": r.filename,
+        "format": r.file_format,
+        "projects_created": r.projects_created,
+        "projects_skipped": r.projects_skipped,
+        "tasks_created": r.tasks_created,
+        "tasks_skipped": r.tasks_skipped,
+        "error_count": r.error_count,
+        "warning_count": r.warning_count,
+        "status": r.status,
+        "message": r.message,
+        "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
+    } for r in rows])
+
+
+@router.get("/export")
+def export_projects_xlsx(
+    ids: str = Query("", description="项目 id，逗号分隔；留空表示导出全部可见项目"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """批量导出项目与任务为一个工作簿（表头与导入模板一致，可再导入）。"""
+    query = db.query(Project)
+    if ids.strip():
+        try:
+            id_list = [int(x) for x in ids.split(",") if x.strip()]
+        except ValueError:
+            raise CustomException(message="ids 参数格式不正确")
+        if not id_list:
+            raise CustomException(message="未选择项目")
+        query = query.filter(Project.id.in_(id_list[:200]))
+    projects = query.order_by(Project.id.asc()).limit(200).all()
+
+    if not projects:
+        raise NotFoundException("没有可导出的项目")
+
+    data = project_io.export_projects(db, projects)
+    name = (
+        f"{projects[0].code}-{projects[0].name}.xlsx" if len(projects) == 1
+        else f"项目导出-{len(projects)}个.xlsx"
+    )
+    return _xlsx_response(data, name)
 
 
 @router.get("/{project_id}/export")

@@ -115,6 +115,7 @@ export interface ImportSheetMeta {
 }
 
 export interface ImportPreview {
+  format: 'xlsx' | 'csv'
   sheets: { project: ImportSheetMeta; task: ImportSheetMeta }
   fields: { project: ImportField[]; task: ImportField[] }
   issues: ImportIssue[]
@@ -129,8 +130,9 @@ export interface ImportResult {
   warnings?: ImportIssue[]
 }
 
-export async function downloadProjectTemplateApi(): Promise<Blob> {
+export async function downloadProjectTemplateApi(format: 'xlsx' | 'csv' = 'xlsx'): Promise<Blob> {
   const res = await http.get('/projects/import/template', {
+    params: { format },
     responseType: 'blob',
     timeout: 60000
   })
@@ -170,4 +172,39 @@ export function executeProjectImportApi(file: File, mapping?: Record<string, any
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 180000
   })
+}
+
+
+export interface ImportLogItem {
+  id: number
+  username: string
+  filename: string
+  format: string
+  projects_created: number
+  projects_skipped: number
+  tasks_created: number
+  tasks_skipped: number
+  error_count: number
+  warning_count: number
+  status: 'success' | 'failed'
+  message: string
+  created_at: string
+}
+
+export function getImportHistoryApi(limit = 8) {
+  return request<ImportLogItem[]>({
+    url: '/projects/import/history',
+    method: 'GET',
+    params: { limit }
+  })
+}
+
+/** 批量导出；ids 为空表示导出全部可见项目 */
+export async function exportProjectsApi(ids: number[]): Promise<Blob> {
+  const res = await http.get('/projects/export', {
+    params: ids.length ? { ids: ids.join(',') } : {},
+    responseType: 'blob',
+    timeout: 120000
+  })
+  return res.data as Blob
 }
