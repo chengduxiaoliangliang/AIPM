@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     # ── Login throttling ──────────────────────────────────────────────────
     LOGIN_MAX_ATTEMPTS: int = 5
     LOGIN_LOCKOUT_MINUTES: int = 15
+    # 强制服务端校验滑块验证码。默认关闭，否则所有脚本/API 客户端都要先解验证码；
+    # 对公网暴露的部署建议打开。
+    LOGIN_REQUIRE_CAPTCHA: bool = False
 
     # ── Email notifications (KB changes) ──────────────────────────────────
     SMTP_HOST: str = ""

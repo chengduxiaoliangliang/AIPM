@@ -35,6 +35,11 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      # main.ts 改为按需注册后，未注册的 <el-xxx> 会静默渲染成空白，
+      # 这一步把它变成明确的失败
+      - name: 组件注册检查
+        run: pnpm run check:components
+
       - name: 类型检查
         run: pnpm exec vue-tsc --noEmit
 

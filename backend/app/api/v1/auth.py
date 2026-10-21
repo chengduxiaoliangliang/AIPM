@@ -83,6 +83,12 @@ def login(request: Request, login_data: LoginRequest, db: Session = Depends(get_
             raise HTTPException(status_code=400, detail={"code": 400, "message": "滑块验证码已失效，请重新验证"})
         captcha_ok = True
 
+    if settings.LOGIN_REQUIRE_CAPTCHA and not captcha_ok:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": 400, "message": "请先完成滑块人机验证"},
+        )
+
     user = db.query(User).filter(User.username == login_data.username).first()
     if not user or not verify_password(login_data.password, user.password_hash):
         login_throttle.record_failure(login_data.username, client_ip)

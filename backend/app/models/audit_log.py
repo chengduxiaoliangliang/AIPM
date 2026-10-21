@@ -5,7 +5,7 @@ from app.database import Base
 class AuditLog(Base):
     __tablename__ = "sys_audit_logs"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, nullable=True)
     username = Column(String(64), nullable=True)
     module = Column(String(64), nullable=False)      # e.g., 'Project', 'Task', 'Auth'

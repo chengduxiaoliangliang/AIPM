@@ -7,7 +7,7 @@ from app.models.task import Task
 class Issue(Base):
     __tablename__ = "pm_issues"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False)
     task_id = Column(Integer, ForeignKey("pm_tasks.id", ondelete="SET NULL"), nullable=True)
     title = Column(String(255), nullable=False)

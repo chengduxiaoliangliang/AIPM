@@ -6,7 +6,7 @@ from app.database import Base
 class WorkLog(Base):
     __tablename__ = "pm_worklogs"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False)
     task_id = Column(Integer, ForeignKey("pm_tasks.id", ondelete="SET NULL"), nullable=True)
     user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="CASCADE"), nullable=False)

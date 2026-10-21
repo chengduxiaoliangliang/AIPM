@@ -22,7 +22,7 @@ role_permission_table = Table(
 class Department(Base):
     __tablename__ = "sys_departments"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(64), nullable=False)
     code = Column(String(64), unique=True, nullable=False)
     parent_id = Column(Integer, ForeignKey("sys_departments.id"), nullable=True)
@@ -41,7 +41,7 @@ class Department(Base):
 class Role(Base):
     __tablename__ = "sys_roles"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(64), nullable=False)
     code = Column(String(64), unique=True, nullable=False)  # e.g., 'ADMIN', 'PM', 'DEV', 'QA'
     description = Column(String(255), nullable=True)
@@ -57,7 +57,7 @@ class Role(Base):
 class Permission(Base):
     __tablename__ = "sys_permissions"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(64), nullable=False)
     code = Column(String(128), unique=True, nullable=False)  # e.g., 'project:create', 'task:update'
     type = Column(String(32), default="menu")  # 'menu', 'button', 'api'
@@ -73,7 +73,7 @@ class Permission(Base):
 class User(Base):
     __tablename__ = "sys_users"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(64), unique=True, index=True, nullable=False)
     nickname = Column(String(64), nullable=False)
     email = Column(String(128), unique=True, index=True, nullable=True)

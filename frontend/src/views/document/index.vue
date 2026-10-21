@@ -1304,6 +1304,8 @@ onBeforeUnmount(() => {
 .opt-meta { float: right; color: var(--text-muted); font-size: 12px; margin-left: 16px; }
 .kb-stats {
   display: flex; align-items: center; gap: 6px;
+  /* 不允许被动作区挤压，否则 "0 页面" 会被拆成三行 */
+  flex-shrink: 0; white-space: nowrap;
   font-size: 13px; color: var(--text-muted);
   b { color: var(--text-main); font-weight: 600; }
   .sep { opacity: .4; }
@@ -1315,7 +1317,12 @@ onBeforeUnmount(() => {
   &.warn { background: #fdf3e2; color: #a56a11; }
   &.bad  { background: #fdecec; color: #b3342f; }
 }
-.header-actions { display: flex; gap: 8px; }
+/* 项目多、健康分出现后，动作区会放不下；允许换行而不是压扁按钮 */
+.header-actions {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 auto; min-width: 0;
+  flex-wrap: wrap; justify-content: flex-end;
+}
 
 /* Ingest banner */
 .ingest-banner {
@@ -1340,7 +1347,13 @@ onBeforeUnmount(() => {
   min-height: 0; overflow: hidden;
 }
 
-.view-toggle { margin-right: 4px; }
+/* 工具栏项目多（含健康分标签）时，按钮组会被压成竖排。
+   固定为不收缩 + 不换行，宁可整条换行也不让按钮变形。 */
+.view-toggle {
+  margin-right: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 
 /* Knowledge graph */
 .graph-wrap {

@@ -29,7 +29,7 @@ class KBSource(Base):
 
     __tablename__ = "pm_kb_sources"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False, index=True)
 
     original_name = Column(String(255), nullable=False)
@@ -62,7 +62,7 @@ class KBPage(Base):
         Index("ix_kb_page_project_type", "project_id", "page_type"),
     )
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False, index=True)
 
     slug = Column(String(160), nullable=False)
@@ -99,7 +99,7 @@ class KBLink(Base):
         Index("ix_kb_link_to", "to_page_id"),
     )
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False, index=True)
     from_page_id = Column(Integer, ForeignKey("pm_kb_pages.id", ondelete="CASCADE"), nullable=False)
     to_page_id = Column(Integer, ForeignKey("pm_kb_pages.id", ondelete="CASCADE"), nullable=False)
@@ -111,7 +111,7 @@ class KBIngestJob(Base):
 
     __tablename__ = "pm_kb_ingest_jobs"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False, index=True)
     source_id = Column(Integer, ForeignKey("pm_kb_sources.id", ondelete="CASCADE"), nullable=True, index=True)
 
@@ -136,7 +136,7 @@ class KBLintReport(Base):
 
     __tablename__ = "pm_kb_lint_reports"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False, index=True)
 
     score = Column(Integer, default=100)
@@ -154,7 +154,7 @@ class KBPageVersion(Base):
         Index("ix_kb_version_page", "page_id", "version_no"),
     )
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     page_id = Column(Integer, ForeignKey("pm_kb_pages.id", ondelete="CASCADE"), nullable=False, index=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False, index=True)
 
@@ -181,7 +181,7 @@ class KBNotifyPref(Base):
 
     __tablename__ = "pm_kb_notify_prefs"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(
         Integer, ForeignKey("sys_users.id", ondelete="CASCADE"),
         nullable=False, unique=True, index=True,

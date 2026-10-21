@@ -70,6 +70,45 @@ def ensure_kb_columns():
                 print(f"  + added {table}.{column}")
 
 
+def ensure_indexes():
+    """Drop secondary indexes that duplicate the primary key.
+
+    Every model used to declare `id = Column(..., primary_key=True, index=True)`,
+    which makes SQLAlchemy emit both PRIMARY and ix_<table>_id. In InnoDB the
+    primary key is already a clustered index, so the second one is pure overhead:
+    an extra B-tree to maintain on every insert/update.
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            "SELECT TABLE_NAME, INDEX_NAME FROM information_schema.STATISTICS "
+            "WHERE table_schema = DATABASE() "
+            "AND COLUMN_NAME = 'id' "
+            "AND NON_UNIQUE = 1 "
+            "AND INDEX_NAME LIKE 'ix\\_%' ESCAPE '\\\\' "
+            "GROUP BY TABLE_NAME, INDEX_NAME "
+            "HAVING COUNT(*) = 1"
+        )).fetchall()
+
+        dropped = 0
+        for table, index in rows:
+            # 确认主键确实建在 id 上，再删
+            pk = conn.execute(text(
+                "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE "
+                "WHERE table_schema = DATABASE() AND table_name = :t "
+                "AND constraint_name = 'PRIMARY' ORDER BY ORDINAL_POSITION"
+            ), {"t": table}).fetchall()
+            if [c[0] for c in pk] != ["id"]:
+                continue
+            conn.execute(text(f"ALTER TABLE `{table}` DROP INDEX `{index}`"))
+            dropped += 1
+            print(f"  - dropped redundant index {table}.{index}")
+
+    if dropped:
+        print(f"  total {dropped} redundant index(es) removed")
+
+
 def init_db(force: bool = False):
     create_database_if_not_exists()
 
@@ -78,6 +117,7 @@ def init_db(force: bool = False):
     print("Database tables created successfully.")
 
     ensure_kb_columns()
+    ensure_indexes()
 
     db = SessionLocal()
     try:

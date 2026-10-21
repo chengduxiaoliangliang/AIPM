@@ -6,7 +6,7 @@ from app.database import Base
 class Task(Base):
     __tablename__ = "pm_tasks"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False)
     milestone_id = Column(Integer, ForeignKey("pm_milestones.id", ondelete="SET NULL"), nullable=True)
     title = Column(String(255), nullable=False, index=True)
@@ -38,7 +38,7 @@ class Task(Base):
 class SubTask(Base):
     __tablename__ = "pm_subtasks"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(Integer, ForeignKey("pm_tasks.id", ondelete="CASCADE"), nullable=False)
     title = Column(String(255), nullable=False)
     is_completed = Column(Boolean, default=False)
@@ -51,7 +51,7 @@ class SubTask(Base):
 class TaskComment(Base):
     __tablename__ = "pm_task_comments"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(Integer, ForeignKey("pm_tasks.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("sys_users.id"), nullable=False)
     content = Column(Text, nullable=False)

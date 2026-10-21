@@ -6,7 +6,7 @@ from app.database import Base
 class Document(Base):
     __tablename__ = "pm_documents"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False)
     title = Column(String(255), nullable=False)
     category = Column(String(64), default="general")  # 'requirement', 'design', 'api', 'deployment', 'meeting', 'general'

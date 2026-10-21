@@ -6,7 +6,7 @@ from app.database import Base
 class Project(Base):
     __tablename__ = "pm_projects"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(128), nullable=False, index=True)
     code = Column(String(64), unique=True, nullable=False, index=True)  # e.g., 'AIPM-2026'
     description = Column(Text, nullable=True)
@@ -34,7 +34,7 @@ class Project(Base):
 class ProjectMember(Base):
     __tablename__ = "pm_project_members"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(Integer, ForeignKey("sys_users.id", ondelete="CASCADE"), nullable=False)
     project_role = Column(String(64), default="developer")  # 'pm', 'tech_lead', 'developer', 'qa', 'designer', 'viewer'
@@ -47,7 +47,7 @@ class ProjectMember(Base):
 class Milestone(Base):
     __tablename__ = "pm_milestones"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     project_id = Column(Integer, ForeignKey("pm_projects.id", ondelete="CASCADE"), nullable=False)
     title = Column(String(128), nullable=False)
     description = Column(Text, nullable=True)
