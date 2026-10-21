@@ -67,6 +67,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/store/modules/app'
 import { useUserStore } from '@/store/modules/user'
 import { ElMessageBox, ElMessage } from 'element-plus'
+import { playLogoutCurtain, CURTAIN_COVER_MS } from '@/utils/transitions'
 import {
   Fold,
   Expand,
@@ -107,9 +108,16 @@ async function handleCommand(cmd: string) {
       cancelButtonText: '取消',
       type: 'warning'
     }).then(async () => {
-      await userStore.logout()
+      // 幕布盖住 → 清会话 → 切路由 → 揭开，避免整页"啪"地换掉
+      const curtain = playLogoutCurtain()
+      try {
+        await new Promise((resolve) => setTimeout(resolve, CURTAIN_COVER_MS))
+        await userStore.logout()
+        await router.push('/login')
+      } finally {
+        await curtain.close()
+      }
       ElMessage.success('已安全退出登录')
-      router.push('/login')
     })
   }
 }

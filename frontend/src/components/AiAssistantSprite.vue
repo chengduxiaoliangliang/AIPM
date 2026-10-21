@@ -1,6 +1,7 @@
 <template>
   <div class="ai-sprite-wrapper">
     <!-- Floating 3D Sprite Trigger Bubble -->
+    <transition name="sprite-trigger">
     <div
       v-if="!isOpen"
       class="ai-sprite-trigger flex-center"
@@ -22,8 +23,9 @@
       </div>
       <span class="sprite-badge">3D AI</span>
     </div>
+    </transition>
 
-    <!-- Glassmorphic Chat Panel -->
+    <!-- Chat Panel -->
     <transition name="sprite-panel">
       <div v-if="isOpen" class="ai-chat-panel vben-card">
         <!-- Panel Header -->
@@ -365,14 +367,14 @@ onMounted(() => {
   box-shadow: 0 10px 30px rgba(79, 70, 229, 0.45), 0 0 0 1.5px rgba(255, 255, 255, 0.25);
   cursor: pointer;
   position: relative;
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
   display: flex;
   align-items: center;
   justify-content: center;
 
   &:hover {
-    transform: scale(1.14) translateY(-4px);
-    box-shadow: 0 16px 36px rgba(79, 70, 229, 0.65), 0 0 20px rgba(6, 182, 212, 0.6);
+    transform: scale(1.06) translateY(-2px);
+    box-shadow: 0 14px 32px rgba(47, 84, 232, 0.5), 0 0 0 1.5px rgba(255, 255, 255, 0.32);
   }
 
   &.is-pulsing {
@@ -414,22 +416,22 @@ onMounted(() => {
 .ai-chat-panel {
   width: 440px;
   height: 600px;
-  background: rgba(255, 255, 255, 0.88);
-  backdrop-filter: blur(28px) saturate(200%);
-  -webkit-backdrop-filter: blur(28px) saturate(200%);
-  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.5);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: absolute;
   bottom: 0;
   right: 0;
+  /* 面板从气泡所在位置展开，而不是从中心弹出 */
+  transform-origin: bottom right;
 
   .panel-header {
     padding: 14px 18px;
-    border-bottom: 1px solid var(--border-light);
+    border-bottom: 1px solid var(--border-color);
     background: rgba(255, 255, 255, 0.5);
 
     .header-bot-icon {
@@ -667,15 +669,43 @@ onMounted(() => {
 }
 
 /* Animations */
-.sprite-panel-enter-active,
-.sprite-panel-leave-active {
-  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+/* 面板：从右下角"长"出来，进入稍慢、离开更快（更跟手） */
+.sprite-panel-enter-active {
+  transition: opacity 0.2s ease,
+    transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.sprite-panel-enter-from,
+.sprite-panel-leave-active {
+  transition: opacity 0.15s ease,
+    transform 0.18s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.sprite-panel-enter-from {
+  opacity: 0;
+  transform: scale(0.94) translateY(10px);
+}
+
 .sprite-panel-leave-to {
   opacity: 0;
-  transform: scale(0.8) translateY(20px);
+  transform: scale(0.97) translateY(4px);
+}
+
+/* 气泡：与面板交叉过渡，视觉上像"气泡撑开成面板" */
+.sprite-trigger-enter-active {
+  transition: opacity 0.18s ease,
+    transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sprite-trigger-leave-active {
+  transition: opacity 0.12s ease,
+    transform 0.16s cubic-bezier(0.4, 0, 1, 1);
+}
+
+.sprite-trigger-enter-from,
+.sprite-trigger-leave-to {
+  opacity: 0;
+  transform: scale(0.86);
 }
 
 @keyframes spritePulse {
