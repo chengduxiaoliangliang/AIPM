@@ -208,141 +208,142 @@ async function onCaptchaSuccess(captchaToken: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #0f172a;
+  background-color: #0b1220;
   position: relative;
   overflow: hidden;
 
-  /* Ambient glowing orbs */
-  .glow-orb {
+  /* 一层极淡的点阵 + 单点柔光，替代原来的三色光球 */
+  &::before {
+    content: '';
     position: absolute;
-    border-radius: 50%;
-    filter: blur(80px);
-    opacity: 0.6;
+    inset: 0;
+    background-image: radial-gradient(circle, rgba(255, 255, 255, 0.055) 1px, transparent 1px);
+    background-size: 24px 24px;
     pointer-events: none;
-    z-index: 1;
+  }
 
-    &.orb-1 {
-      width: 480px;
-      height: 480px;
-      background: radial-gradient(circle, #4f46e5 0%, rgba(79, 70, 229, 0) 70%);
-      top: -100px;
-      left: -100px;
-    }
+  &::after {
+    content: '';
+    position: absolute;
+    width: 760px;
+    height: 760px;
+    left: -220px;
+    top: -260px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(47, 84, 232, 0.28) 0%, rgba(47, 84, 232, 0) 62%);
+    filter: blur(40px);
+    pointer-events: none;
+  }
 
-    &.orb-2 {
-      width: 520px;
-      height: 520px;
-      background: radial-gradient(circle, #8b5cf6 0%, rgba(139, 92, 246, 0) 70%);
-      bottom: -120px;
-      right: -100px;
-    }
-
-    &.orb-3 {
-      width: 360px;
-      height: 360px;
-      background: radial-gradient(circle, #06b6d4 0%, rgba(6, 182, 212, 0) 70%);
-      top: 40%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      opacity: 0.35;
-    }
+  .glow-orb {
+    display: none;
   }
 
   .login-card-container {
     width: 880px;
     height: 520px;
-    background: rgba(255, 255, 255, 0.82);
-    backdrop-filter: blur(28px) saturate(200%);
-    -webkit-backdrop-filter: blur(28px) saturate(200%);
-    border: 1px solid rgba(255, 255, 255, 0.5);
+    background: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: var(--radius-xl);
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.55);
     display: flex;
     overflow: hidden;
     z-index: 10;
 
+    /* ── 左侧：深色技术面板 ───────────────────────────────── */
     .login-banner {
-      width: 42%;
-      background: linear-gradient(135deg, rgba(79, 70, 229, 0.95) 0%, rgba(124, 58, 237, 0.95) 100%);
-      padding: 40px 32px;
+      width: 44%;
+      background-color: #0e1729;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+      background-size: 26px 26px;
+      padding: 44px 36px;
       display: flex;
       flex-direction: column;
       justify-content: center;
-      color: #ffffff;
       position: relative;
-      border-right: 1px solid rgba(255, 255, 255, 0.15);
+      border-right: 1px solid rgba(255, 255, 255, 0.07);
+
+      .banner-content {
+        position: relative;
+        z-index: 1;
+      }
 
       .brand-logo {
-        width: 48px;
-        height: 48px;
-        background: rgba(255, 255, 255, 0.2);
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        border-radius: var(--radius-md);
+        width: 40px;
+        height: 40px;
+        background: var(--primary-color);
+        border-radius: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
-        margin-bottom: 20px;
-        box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+        margin-bottom: 18px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
       }
 
       .brand-name {
-        font-size: 32px;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-        margin-bottom: 8px;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        margin-bottom: 6px;
+        color: #ffffff;
       }
 
       .brand-desc {
-        font-size: 13px;
-        color: rgba(255, 255, 255, 0.85);
-        margin-bottom: 32px;
-        line-height: 1.5;
+        font-size: 12.5px;
+        color: rgba(255, 255, 255, 0.5);
+        margin-bottom: 30px;
+        line-height: 1.6;
+        letter-spacing: 0.01em;
       }
 
       .banner-features {
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        gap: 13px;
+        padding-top: 22px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
 
         .feature-item {
-          font-size: 13px;
+          font-size: 12.5px;
           display: flex;
           align-items: center;
-          gap: 10px;
-          color: rgba(255, 255, 255, 0.92);
+          gap: 11px;
+          color: rgba(255, 255, 255, 0.72);
 
           .feat-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background-color: #38bdf8;
-            box-shadow: 0 0 8px #38bdf8;
+            width: 14px;
+            height: 1px;
+            background: rgba(143, 166, 255, 0.75);
+            flex-shrink: 0;
           }
         }
       }
     }
 
+    /* ── 右侧：表单 ───────────────────────────────────────── */
     .login-form-wrapper {
       flex: 1;
-      padding: 40px 44px;
+      padding: 44px 46px;
       display: flex;
       flex-direction: column;
       justify-content: center;
-      background-color: rgba(255, 255, 255, 0.6);
+      background: #ffffff;
 
       .form-header {
-        margin-bottom: 24px;
+        margin-bottom: 26px;
 
         h2 {
-          font-size: 22px;
-          font-weight: 700;
+          font-size: 20px;
+          font-weight: 600;
           color: var(--text-main);
-          letter-spacing: -0.5px;
+          letter-spacing: -0.02em;
           margin-bottom: 6px;
         }
 
         p {
-          font-size: 13px;
+          font-size: 12.5px;
           color: var(--text-muted);
         }
       }
@@ -352,34 +353,37 @@ async function onCaptchaSuccess(captchaToken: string) {
         justify-content: space-between;
         align-items: center;
         margin-bottom: 18px;
-        font-size: 13px;
+        font-size: 12.5px;
       }
 
       .submit-btn {
         width: 100%;
-        font-weight: 700;
-        letter-spacing: 2px;
+        height: 42px;
+        font-weight: 500;
+        font-size: 14px;
+        letter-spacing: 0.06em;
         background: var(--primary-color);
         border: none;
-        height: 44px;
         border-radius: var(--radius-sm);
-        box-shadow: 0 4px 14px rgba(79, 70, 229, 0.4);
+        box-shadow: 0 1px 2px rgba(47, 84, 232, 0.2);
+        transition: background-color 0.15s ease, box-shadow 0.15s ease;
 
         &:hover {
           background: var(--primary-hover);
+          box-shadow: 0 2px 8px rgba(47, 84, 232, 0.28);
         }
       }
 
       .demo-accounts {
-        margin-top: 20px;
+        margin-top: 22px;
         padding-top: 14px;
-        border-top: 1px dashed rgba(203, 213, 225, 0.8);
+        border-top: 1px solid var(--border-color);
 
         .demo-title {
-          font-size: 12px;
-          color: var(--text-muted);
+          font-size: 11.5px;
+          color: var(--text-faint);
           margin-bottom: 8px;
-          font-weight: 500;
+          letter-spacing: 0.02em;
         }
 
         .account-tags {
@@ -389,13 +393,13 @@ async function onCaptchaSuccess(captchaToken: string) {
 
           .account-tag {
             cursor: pointer;
-            font-weight: 600;
+            font-weight: 500;
             border-radius: var(--radius-xs);
-            transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: border-color 0.15s ease, background-color 0.15s ease;
 
             &:hover {
-              transform: translateY(-2px);
-              box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+              border-color: var(--primary-color);
+              background: var(--primary-light);
             }
           }
         }

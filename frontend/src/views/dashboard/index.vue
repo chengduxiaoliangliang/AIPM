@@ -8,8 +8,8 @@
           :value="stats?.metrics.active_projects || 0"
           unit="个"
           :icon="FolderOpened"
-          icon-bg="rgba(9, 96, 189, 0.12)"
-          icon-color="#0960bd"
+          icon-bg="rgba(47, 84, 232, 0.10)"
+          icon-color="#2f54e8"
           :trend="12.5"
           tip="较上月稳步推进"
         />
@@ -20,8 +20,8 @@
           :value="stats?.metrics.in_progress_tasks || 0"
           unit="项"
           :icon="Checked"
-          icon-bg="rgba(82, 196, 26, 0.12)"
-          icon-color="#52c41a"
+          icon-bg="rgba(15, 157, 88, 0.10)"
+          icon-color="#0f9d58"
           :trend="8.2"
           tip="迭代任务按期执行"
         />
@@ -32,8 +32,8 @@
           :value="stats?.metrics.pending_approvals || 0"
           unit="条"
           :icon="Timer"
-          icon-bg="rgba(250, 173, 20, 0.12)"
-          icon-color="#faad14"
+          icon-bg="rgba(217, 119, 6, 0.10)"
+          icon-color="#d97706"
           :trend="-15.4"
           tip="待项目经理审批"
         />
@@ -44,8 +44,8 @@
           :value="stats?.metrics.open_issues || 0"
           unit="个"
           :icon="WarningFilled"
-          icon-bg="rgba(255, 77, 79, 0.12)"
-          icon-color="#ff4d4f"
+          icon-bg="rgba(220, 38, 38, 0.10)"
+          icon-color="#dc2626"
           :trend="-5.0"
           tip="缺陷收敛指标良好"
         />
@@ -119,7 +119,7 @@
               <template #default="{ row }">
                 <el-progress
                   :percentage="row.completion_rate"
-                  :color="row.completion_rate >= 80 ? '#67C23A' : row.completion_rate >= 50 ? '#E6A23C' : '#409EFF'"
+                  :color="row.completion_rate >= 80 ? '#0f9d58' : row.completion_rate >= 50 ? '#d97706' : '#2f54e8'"
                   :stroke-width="8"
                 />
               </template>
@@ -165,6 +165,14 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch } from 'vue'
 import * as echarts from 'echarts'
+
+/** 图表配色跟随 CSS 变量，暗色模式自动适配 */
+const CHART_COLORS = ['#2f54e8', '#0f9d58', '#d97706', '#7c3aed', '#0891b2']
+
+function cssVar(name: string, fallback: string) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return v || fallback
+}
 import { getDashboardStatsApi } from '@/api/stats'
 import StatCard from '@/components/StatCard.vue'
 import type { DashboardStats } from '@/types'
@@ -217,11 +225,26 @@ function renderTrendChart() {
     tooltip: { trigger: 'axis' },
     legend: {
       data: trendType.value === 'task' ? ['创建任务数', '完成任务数'] : ['投入工时 (小时)'],
-      bottom: 0
+      bottom: 0,
+      icon: 'roundRect',
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 16,
+      textStyle: { color: cssVar('--text-muted', '#667085'), fontSize: 12 }
     },
     grid: { left: '3%', right: '4%', bottom: '10%', top: '8%', containLabel: true },
-    xAxis: { type: 'category', data: months },
-    yAxis: { type: 'value' },
+    xAxis: {
+      type: 'category',
+      data: months,
+      axisLine: { lineStyle: { color: cssVar('--border-color', '#e4e7ec') } },
+      axisTick: { show: false },
+      axisLabel: { color: cssVar('--text-muted', '#667085'), fontSize: 11 }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: cssVar('--text-faint', '#98a2b3'), fontSize: 11 },
+      splitLine: { lineStyle: { color: cssVar('--border-color', '#e4e7ec'), type: 'dashed' } }
+    },
     series:
       trendType.value === 'task'
         ? [
@@ -229,18 +252,27 @@ function renderTrendChart() {
               name: '创建任务数',
               type: 'bar',
               data: created,
-              itemStyle: { color: '#409EFF', borderRadius: [4, 4, 0, 0] }
+              barWidth: 24,
+              itemStyle: {
+                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  { offset: 0, color: '#5b7af5' },
+                  { offset: 1, color: '#2f54e8' }
+                ]),
+                borderRadius: [3, 3, 0, 0]
+              }
             },
             {
               name: '完成任务数',
               type: 'line',
               smooth: true,
               data: completed,
-              itemStyle: { color: '#67C23A' },
+              itemStyle: { color: '#0f9d58' },
+              lineStyle: { width: 2 },
+              symbolSize: 5,
               areaStyle: {
                 color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                  { offset: 0, color: 'rgba(103, 194, 58, 0.4)' },
-                  { offset: 1, color: 'rgba(103, 194, 58, 0.05)' }
+                  { offset: 0, color: 'rgba(15, 157, 88, 0.16)' },
+                  { offset: 1, color: 'rgba(15, 157, 88, 0.01)' }
                 ])
               }
             }
@@ -250,12 +282,13 @@ function renderTrendChart() {
               name: '投入工时 (小时)',
               type: 'bar',
               data: hours,
+              barWidth: 24,
               itemStyle: {
                 color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                  { offset: 0, color: '#0960bd' },
-                  { offset: 1, color: '#3a8ee6' }
+                  { offset: 0, color: '#4a6bf0' },
+                  { offset: 1, color: '#2f54e8' }
                 ]),
-                borderRadius: [4, 4, 0, 0]
+                borderRadius: [3, 3, 0, 0]
               }
             }
           ]
@@ -275,15 +308,26 @@ function renderStatusChart() {
   }))
 
   const option: echarts.EChartsOption = {
+    color: CHART_COLORS,
     tooltip: { trigger: 'item' },
-    legend: { bottom: 0 },
+    legend: {
+      bottom: 0,
+      icon: 'circle',
+      itemWidth: 8,
+      itemHeight: 8,
+      textStyle: { color: cssVar('--text-muted', '#667085'), fontSize: 12 }
+    },
     series: [
       {
         name: '项目状态',
         type: 'pie',
-        radius: ['45%', '70%'],
+        radius: ['56%', '74%'],
         avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 2 },
+        itemStyle: {
+          borderRadius: 4,
+          borderColor: cssVar('--bg-card', '#ffffff'),
+          borderWidth: 2
+        },
         label: { show: false, position: 'center' },
         emphasis: {
           label: { show: true, fontSize: 16, fontWeight: 'bold' }

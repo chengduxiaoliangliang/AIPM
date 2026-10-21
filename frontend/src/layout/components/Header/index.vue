@@ -118,82 +118,90 @@ async function handleCommand(cmd: string) {
 <style scoped lang="scss">
 .header-wrapper {
   height: var(--header-height);
-  background-color: var(--bg-header);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border-bottom: 1px solid var(--border-glass);
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.03);
   z-index: 999;
+  flex-shrink: 0;
 
   .header-left {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 12px;
 
     .breadcrumb {
       font-size: 13px;
-      font-weight: 500;
+
+      :deep(.el-breadcrumb__inner) {
+        color: var(--text-muted);
+        font-weight: 450;
+      }
+
+      :deep(.el-breadcrumb__item:last-child .el-breadcrumb__inner) {
+        color: var(--text-main);
+        font-weight: 500;
+      }
+
+      :deep(.el-breadcrumb__separator) {
+        color: var(--text-faint);
+      }
     }
   }
 
   .header-right {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
 
     .user-profile-btn {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 4px 10px;
+      padding: 4px 10px 4px 5px;
       border-radius: var(--radius-sm);
       cursor: pointer;
-      background: rgba(255, 255, 255, 0.2);
-      border: 1px solid var(--border-glass-subtle);
-      transition: all 0.2s ease;
+      border: 1px solid transparent;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
 
       &:hover {
-        background-color: var(--bg-hover);
-        border-color: var(--primary-light);
+        background: var(--bg-hover);
+        border-color: var(--border-color);
       }
 
       .user-name {
         font-size: 13px;
-        font-weight: 600;
+        font-weight: 500;
         color: var(--text-main);
       }
 
       .admin-badge {
         font-size: 10px;
         padding: 0 5px;
-        height: 18px;
-        line-height: 16px;
-        border-radius: 4px;
+        height: 17px;
+        line-height: 15px;
+        border-radius: 3px;
         font-weight: 600;
       }
     }
   }
 
   .action-btn {
-    width: 36px;
-    height: 36px;
+    width: 34px;
+    height: 34px;
     border-radius: var(--radius-sm);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-regular);
+    color: var(--text-muted);
     cursor: pointer;
-    background: transparent;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: background-color 0.15s ease, color 0.15s ease;
 
     &:hover {
-      background-color: var(--bg-hover);
-      color: var(--primary-color);
-      transform: translateY(-1px);
+      background: var(--bg-hover);
+      color: var(--text-main);
     }
   }
 }

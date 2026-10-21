@@ -34,68 +34,79 @@ defineProps<{
 
 <style scoped lang="scss">
 .stat-card {
-  padding: 18px 20px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  border-radius: var(--radius-md);
   position: relative;
+  padding: 16px 18px 15px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
 
-  &::before {
+  /* 角落刻度线：仪表感来自"标记"，而不是发光 */
+  &::before,
+  &::after {
     content: '';
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, var(--primary-color), transparent);
-    opacity: 0.8;
+    width: 9px;
+    height: 9px;
+    border-color: var(--primary-glow);
+    border-style: solid;
+    pointer-events: none;
+    opacity: 0.9;
+  }
+
+  &::before {
+    top: 7px;
+    right: 7px;
+    border-width: 1px 1px 0 0;
+  }
+
+  &::after {
+    bottom: 7px;
+    left: 7px;
+    border-width: 0 0 1px 1px;
   }
 
   .stat-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
 
     .stat-title {
-      font-size: 13px;
+      font-size: 12.5px;
+      font-weight: 500;
       color: var(--text-muted);
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.01em;
     }
 
     .icon-box {
-      width: 40px;
-      height: 40px;
+      width: 30px;
+      height: 30px;
       border-radius: var(--radius-sm);
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      border: 1px solid var(--border-glass-subtle);
+      flex-shrink: 0;
     }
   }
 
-  &:hover .icon-box {
-    transform: scale(1.08) translateY(-2px);
-  }
-
   .stat-body {
-    margin-top: 14px;
+    margin-top: 12px;
 
     .stat-value {
-      font-size: 28px;
-      font-weight: 800;
+      font-family: var(--font-mono);
+      font-size: 27px;
+      font-weight: 600;
+      line-height: 1.15;
       color: var(--text-main);
-      letter-spacing: -0.8px;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
 
       .stat-unit {
-        font-size: 14px;
+        font-family: var(--font-sans);
+        font-size: 12.5px;
         font-weight: 500;
-        margin-left: 6px;
-        color: var(--text-muted);
+        margin-left: 5px;
+        color: var(--text-faint);
+        letter-spacing: 0;
       }
     }
 
@@ -104,27 +115,28 @@ defineProps<{
       align-items: center;
       gap: 8px;
       margin-top: 10px;
-      font-size: 12px;
+      font-size: 11.5px;
 
       .trend-tag {
-        font-weight: 700;
-        padding: 2px 6px;
-        border-radius: var(--radius-xs);
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 600;
+        padding: 1px 5px;
+        border-radius: 3px;
 
         &.up {
-          background-color: var(--success-light);
+          background: var(--success-light);
           color: var(--success-color);
         }
 
         &.down {
-          background-color: var(--danger-light);
+          background: var(--danger-light);
           color: var(--danger-color);
         }
       }
 
       .tip-text {
-        color: var(--text-muted);
-        font-weight: 500;
+        color: var(--text-faint);
       }
     }
   }

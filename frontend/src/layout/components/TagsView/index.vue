@@ -53,13 +53,12 @@ function closeTag(path: string) {
 <style scoped lang="scss">
 .tags-view-container {
   height: var(--tabs-height);
-  background-color: var(--bg-header);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border-bottom: 1px solid var(--border-glass-subtle);
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border-color);
   padding: 0 16px;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 
   .tags-scrollbar {
     width: 100%;
@@ -68,7 +67,7 @@ function closeTag(path: string) {
     .tags-wrapper {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 4px;
       padding: 2px 0;
     }
   }
@@ -77,57 +76,57 @@ function closeTag(path: string) {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 28px;
-    padding: 0 12px;
+    height: 26px;
+    padding: 0 9px;
     font-size: 12px;
-    font-weight: 500;
-    color: var(--text-regular);
-    background: rgba(255, 255, 255, 0.4);
-    border: 1px solid var(--border-glass-subtle);
+    font-weight: 450;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
     border-radius: var(--radius-xs);
     text-decoration: none;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 
     .tag-dot {
-      width: 6px;
-      height: 6px;
+      width: 5px;
+      height: 5px;
       border-radius: 50%;
-      background-color: #ffffff;
-      box-shadow: 0 0 6px #ffffff;
+      background: var(--primary-color);
     }
 
     &:hover {
-      color: var(--primary-color);
-      border-color: var(--primary-color);
+      color: var(--text-regular);
       background: var(--bg-hover);
-      transform: translateY(-1px);
     }
 
     &.active {
-      color: #ffffff;
-      background: var(--primary-color);
-      border-color: var(--primary-color);
-      box-shadow: 0 2px 8px rgba(79, 70, 229, 0.35);
-      font-weight: 600;
+      color: var(--primary-color);
+      background: var(--primary-light);
+      border-color: var(--primary-glow);
+      font-weight: 500;
 
       .close-icon {
-        color: rgba(255, 255, 255, 0.8);
+        color: var(--primary-color);
+        opacity: 0.6;
+
         &:hover {
-          color: #ffffff;
-          background: rgba(0, 0, 0, 0.2);
+          opacity: 1;
+          background: var(--primary-light);
         }
       }
     }
 
     .close-icon {
-      font-size: 11px;
+      font-size: 10px;
       border-radius: 50%;
       padding: 1px;
-      transition: all 0.2s ease;
+      color: var(--text-faint);
+      transition: all 0.15s ease;
 
       &:hover {
-        background-color: rgba(0, 0, 0, 0.1);
+        background: var(--bg-active);
+        color: var(--text-regular);
       }
     }
   }

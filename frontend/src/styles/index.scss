@@ -10,19 +10,31 @@
 html, body, #app {
   width: 100%;
   height: 100%;
-  font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--bg-color);
   background-image: var(--bg-mesh);
+  background-size: var(--bg-mesh-size);
   background-attachment: fixed;
   color: var(--text-main);
 }
 
-/* Custom Modern Minimal Scrollbars */
+/* 数字统一等宽对齐：表格与指标卡里非常重要 */
+.tnum,
+.el-table td .cell,
+.stat-value,
+.metric {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -30,15 +42,15 @@ html, body, #app {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
+  background: rgba(152, 162, 179, 0.32);
   border-radius: var(--radius-full);
+
+  &:hover {
+    background: rgba(152, 162, 179, 0.55);
+  }
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.6);
-}
-
-/* Layout Utilities */
+/* ── Layout utilities ──────────────────────────────────────────────────── */
 .flex-center {
   display: flex;
   align-items: center;
@@ -56,83 +68,157 @@ html, body, #app {
   min-height: calc(100vh - var(--header-height) - var(--tabs-height));
 }
 
-/* Glassmorphic Search & Filter Bar */
-.table-search-bar {
-  background: var(--bg-card);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  padding: 16px 20px;
-  border-radius: var(--radius-md);
-  margin-bottom: 18px;
-  border: 1px solid var(--border-glass);
-  box-shadow: var(--shadow-glass);
-}
-
-/* Glassmorphic Table Container */
+/* ── Surfaces ──────────────────────────────────────────────────────────── */
+.table-search-bar,
 .table-card {
   background: var(--bg-card);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-glass);
-  padding: 20px;
-  box-shadow: var(--shadow-glass);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+}
+
+.table-search-bar {
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+
+.table-card {
+  padding: 18px 20px;
 }
 
 .page-header-title {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 600;
   color: var(--text-main);
   display: flex;
   align-items: center;
   gap: 8px;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.015em;
 }
 
-/* Flat & Glass Element Plus Component Refinements */
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+.el-button {
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
 .el-button--primary {
   --el-button-bg-color: var(--primary-color);
   --el-button-border-color: var(--primary-color);
   --el-button-hover-bg-color: var(--primary-hover);
   --el-button-hover-border-color: var(--primary-hover);
-  font-weight: 600;
-  border-radius: var(--radius-sm);
-  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --el-button-active-bg-color: var(--primary-active);
+  --el-button-active-border-color: var(--primary-active);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(47, 84, 232, 0.18);
 
   &:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
+    box-shadow: 0 2px 6px rgba(47, 84, 232, 0.22);
   }
 }
 
+/* ── Inputs ────────────────────────────────────────────────────────────── */
 .el-input__wrapper,
-.el-select__wrapper {
+.el-select__wrapper,
+.el-textarea__inner {
   border-radius: var(--radius-sm);
-  background-color: rgba(255, 255, 255, 0.7) !important;
-  backdrop-filter: blur(8px);
+  background-color: #ffffff !important;
   box-shadow: 0 0 0 1px var(--border-color) inset !important;
-  transition: all 0.2s ease;
+  transition: box-shadow 0.15s ease;
 
-  &.is-focus {
-    box-shadow: 0 0 0 1.5px var(--primary-color) inset, 0 0 0 3px var(--primary-glow) !important;
+  &:hover {
+    box-shadow: 0 0 0 1px var(--border-strong) inset !important;
+  }
+
+  &.is-focus,
+  &:focus-within {
+    box-shadow: 0 0 0 1px var(--primary-color) inset,
+      0 0 0 3px var(--primary-glow) !important;
   }
 }
 
+/* ── Tables ────────────────────────────────────────────────────────────── */
 .el-table {
   background-color: transparent !important;
-  --el-table-header-bg-color: rgba(241, 245, 249, 0.6);
-  --el-table-row-hover-bg-color: rgba(79, 70, 229, 0.05);
+  --el-table-border-color: var(--border-color);
+  --el-table-header-bg-color: var(--bg-subtle);
+  --el-table-row-hover-bg-color: var(--primary-soft);
+  /* 条纹行：不覆盖会沿用 Element 默认浅灰，暗色模式下会变成白条 */
+  --el-fill-color-lighter: var(--bg-subtle);
+  --el-fill-color-light: var(--bg-hover);
+  font-size: 13px;
 
   th.el-table__cell {
     font-weight: 600;
-    color: var(--text-main);
-    background-color: var(--el-table-header-bg-color) !important;
+    font-size: 12.5px;
+    letter-spacing: 0.01em;
+    color: var(--text-muted);
+    background-color: var(--bg-subtle) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+  }
+
+  td.el-table__cell {
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  /* 数字列右对齐时更易比较 */
+  .cell {
+    line-height: 1.5;
   }
 }
 
+/* ── Dialog / Drawer ───────────────────────────────────────────────────── */
+.el-dialog,
+.el-drawer {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.el-dialog__header {
+  padding-bottom: 14px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.el-dialog__title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* ── Tags ──────────────────────────────────────────────────────────────── */
+.el-tag {
+  border-radius: var(--radius-xs);
+  font-weight: 500;
+}
+
+/* ── Focus visibility (a11y) ───────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 1px;
+}
+
+/* ── Text helpers ──────────────────────────────────────────────────────── */
 .text-primary { color: var(--primary-color) !important; }
 .text-success { color: var(--success-color) !important; }
 .text-warning { color: var(--warning-color) !important; }
 .text-danger { color: var(--danger-color) !important; }
 .text-muted { color: var(--text-muted) !important; }
+.text-faint { color: var(--text-faint) !important; }
+
+/* ── Empty state ───────────────────────────────────────────────────────── */
+.el-empty {
+  padding: 30px 0;
+
+  .el-empty__image {
+    width: 84px !important;
+    height: auto !important;
+    opacity: 0.5;
+  }
+
+  .el-empty__description p {
+    font-size: 12.5px;
+    color: var(--text-faint);
+  }
+}

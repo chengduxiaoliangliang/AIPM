@@ -137,13 +137,11 @@ const activeMenu = computed(() => route.path)
 .sidebar-wrapper {
   width: var(--sidebar-width);
   height: 100vh;
-  background-color: var(--bg-sidebar);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: linear-gradient(180deg, #0f1829 0%, #0b1220 100%);
   display: flex;
   flex-direction: column;
-  transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  transition: width 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
   z-index: 1001;
 
@@ -155,46 +153,50 @@ const activeMenu = computed(() => route.path)
     height: var(--header-height);
     display: flex;
     align-items: center;
-    padding: 0 18px;
-    gap: 12px;
+    padding: 0 16px;
+    gap: 11px;
     cursor: pointer;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     overflow: hidden;
+    flex-shrink: 0;
 
     .logo-icon-box {
-      width: 36px;
-      height: 36px;
-      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-      border-radius: var(--radius-sm);
+      width: 30px;
+      height: 30px;
+      border-radius: 7px;
+      background: var(--primary-color);
       display: flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
-      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22),
+        0 2px 6px rgba(47, 84, 232, 0.35);
     }
 
     .logo-text {
       display: flex;
       flex-direction: column;
       white-space: nowrap;
+      line-height: 1.25;
 
       .brand-title {
-        font-size: 16px;
-        font-weight: 800;
-        letter-spacing: 0.5px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.07em;
         color: #ffffff;
       }
 
       .brand-sub {
-        font-size: 11px;
-        color: rgba(255, 255, 255, 0.5);
+        font-size: 10.5px;
+        color: rgba(255, 255, 255, 0.42);
+        letter-spacing: 0.02em;
       }
     }
   }
 
   .menu-scrollbar {
     flex: 1;
+    padding-top: 8px;
 
     :deep(.el-menu) {
       border-right: none;
@@ -202,36 +204,69 @@ const activeMenu = computed(() => route.path)
 
       .el-menu-item,
       .el-sub-menu__title {
-        color: rgba(255, 255, 255, 0.7);
-        height: 46px;
-        line-height: 46px;
-        margin: 4px 10px;
+        position: relative;
+        color: rgba(255, 255, 255, 0.72);
+        height: 42px;
+        line-height: 42px;
+        margin: 2px 8px;
         border-radius: var(--radius-sm);
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-        font-weight: 500;
+        transition: background-color 0.15s ease, color 0.15s ease;
+        font-weight: 450;
+        font-size: 13.5px;
 
         &:hover {
           color: #ffffff;
-          background-color: rgba(255, 255, 255, 0.07);
+          background-color: rgba(255, 255, 255, 0.05);
         }
 
         .el-icon {
-          font-size: 18px;
-          margin-right: 10px;
+          font-size: 16px;
+          margin-right: 9px;
+          color: rgba(255, 255, 255, 0.58);
+          transition: color 0.15s ease;
+        }
+      }
+
+      .el-sub-menu.is-active > .el-sub-menu__title {
+        color: #ffffff;
+
+        .el-icon {
+          color: #8fa6ff;
         }
       }
 
       .el-menu-item.is-active {
         color: #ffffff !important;
-        background: linear-gradient(90deg, #4f46e5 0%, #6366f1 100%) !important;
-        box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
-        font-weight: 600;
+        background: rgba(47, 84, 232, 0.16) !important;
+        font-weight: 500;
+
+        .el-icon {
+          color: #8fa6ff;
+        }
+
+        /* 左缘强调条：像仪表的当前刻度 */
+        &::before {
+          content: '';
+          position: absolute;
+          left: -8px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 2px;
+          height: 16px;
+          border-radius: 0 2px 2px 0;
+          background: var(--primary-color);
+        }
       }
 
       .el-sub-menu .el-menu-item {
-        margin: 2px 10px 2px 20px;
-        height: 40px;
-        line-height: 40px;
+        margin: 2px 8px 2px 16px;
+        height: 38px;
+        line-height: 38px;
+        font-size: 13px;
+
+        &.is-active::before {
+          left: -16px;
+        }
       }
     }
   }
