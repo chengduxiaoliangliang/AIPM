@@ -22,6 +22,10 @@ class ImportLog(Base):
     projects_skipped = Column(Integer, default=0)
     tasks_created = Column(Integer, default=0)
     tasks_skipped = Column(Integer, default=0)
+    milestones_created = Column(Integer, default=0)
+    milestones_skipped = Column(Integer, default=0)
+    members_created = Column(Integer, default=0)
+    members_skipped = Column(Integer, default=0)
 
     error_count = Column(Integer, default=0)
     warning_count = Column(Integer, default=0)

@@ -48,7 +48,7 @@ def create_database_if_not_exists():
         connection.close()
 
 
-def ensure_kb_columns():
+def ensure_columns():
     """Add columns introduced after a table was first created.
 
     `Base.metadata.create_all` only creates *missing tables* — it never alters an
@@ -59,6 +59,11 @@ def ensure_kb_columns():
     wanted = [
         ("pm_kb_pages", "visibility", "VARCHAR(16) NOT NULL DEFAULT 'project'"),
         ("pm_kb_pages", "allowed_roles", "VARCHAR(255) NULL"),
+        # 导入日志后来扩展到里程碑与成员
+        ("pm_import_logs", "milestones_created", "INT NOT NULL DEFAULT 0"),
+        ("pm_import_logs", "milestones_skipped", "INT NOT NULL DEFAULT 0"),
+        ("pm_import_logs", "members_created", "INT NOT NULL DEFAULT 0"),
+        ("pm_import_logs", "members_skipped", "INT NOT NULL DEFAULT 0"),
     ]
     with engine.begin() as conn:
         for table, column, ddl in wanted:
@@ -117,7 +122,7 @@ def init_db(force: bool = False):
     Base.metadata.create_all(bind=engine)
     print("Database tables created successfully.")
 
-    ensure_kb_columns()
+    ensure_columns()
     ensure_indexes()
 
     db = SessionLocal()

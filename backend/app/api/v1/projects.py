@@ -188,11 +188,13 @@ async def preview_import(
         raise CustomException(message=str(exc))
 
     rows = parsed.pop("rows")
-    issues = project_io.validate_rows(db, rows["project"], rows["task"])
+    issues = project_io.validate_rows(db, rows)
     parsed["issues"] = parsed["issues"] + issues
     parsed["summary"] = {
-        "projects": len(rows["project"]),
-        "tasks": len(rows["task"]),
+        "projects": len(rows.get("project", [])),
+        "tasks": len(rows.get("task", [])),
+        "milestones": len(rows.get("milestone", [])),
+        "members": len(rows.get("member", [])),
         "errors": sum(1 for i in parsed["issues"] if i["level"] == "error"),
         "warnings": sum(1 for i in parsed["issues"] if i["level"] == "warning"),
     }
@@ -221,7 +223,7 @@ async def execute_import(
         raise CustomException(message=str(exc))
 
     rows = parsed["rows"]
-    issues = project_io.validate_rows(db, rows["project"], rows["task"])
+    issues = project_io.validate_rows(db, rows)
     errors = [i for i in issues if i["level"] == "error"]
     warnings = [i for i in issues if i["level"] == "warning"]
 
@@ -235,6 +237,10 @@ async def execute_import(
             projects_skipped=(result or {}).get("projects_skipped", 0),
             tasks_created=(result or {}).get("tasks_created", 0),
             tasks_skipped=(result or {}).get("tasks_skipped", 0),
+            milestones_created=(result or {}).get("milestones_created", 0),
+            milestones_skipped=(result or {}).get("milestones_skipped", 0),
+            members_created=(result or {}).get("members_created", 0),
+            members_skipped=(result or {}).get("members_skipped", 0),
             error_count=len(errors),
             warning_count=len(warnings),
             status=status,
@@ -251,7 +257,7 @@ async def execute_import(
         )
 
     try:
-        result = project_io.execute_import(db, rows["project"], rows["task"], current_user)
+        result = project_io.execute_import(db, rows, current_user)
     except Exception as exc:
         db.rollback()
         log("failed", f"导入异常：{exc}")
@@ -262,7 +268,9 @@ async def execute_import(
         code=200,
         message=(
             f"导入完成：新增 {result['projects_created']} 个项目、"
-            f"{result['tasks_created']} 个任务"
+            f"{result['tasks_created']} 个任务、"
+            f"{result['milestones_created']} 个里程碑、"
+            f"{result['members_created']} 个成员"
         ),
         data={**result, "warnings": warnings[:50]},
     )
@@ -289,6 +297,10 @@ def import_history(
         "projects_skipped": r.projects_skipped,
         "tasks_created": r.tasks_created,
         "tasks_skipped": r.tasks_skipped,
+        "milestones_created": r.milestones_created or 0,
+        "milestones_skipped": r.milestones_skipped or 0,
+        "members_created": r.members_created or 0,
+        "members_skipped": r.members_skipped or 0,
         "error_count": r.error_count,
         "warning_count": r.warning_count,
         "status": r.status,

@@ -25,7 +25,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
-from app.models.project import Project, ProjectMember
+from app.models.project import Milestone, Project, ProjectMember
 from app.models.task import Task
 from app.models.user import User
 
@@ -35,6 +35,8 @@ MAX_BYTES = 8 * 1024 * 1024
 SHEET_PROJECT = "项目"
 SHEET_TASK = "任务"
 SHEET_HELP = "填写说明"
+SHEET_MILESTONE = "里程碑"
+SHEET_MEMBER = "成员"
 
 # ─── 字段定义 ────────────────────────────────────────────────────────────────
 
@@ -84,6 +86,28 @@ TASK_FIELDS: List[Dict[str, Any]] = [
      "aliases": ["描述", "任务描述", "说明", "description", "desc"]},
 ]
 
+MILESTONE_FIELDS: List[Dict[str, Any]] = [
+    {"key": "project_code", "label": "项目编号", "required": True,
+     "aliases": ["项目编号", "编号", "所属项目", "project code"]},
+    {"key": "title", "label": "里程碑名称", "required": True,
+     "aliases": ["里程碑名称", "里程碑", "名称", "milestone"]},
+    {"key": "due_date", "label": "计划日期", "required": True,
+     "aliases": ["计划日期", "日期", "截止日期", "due date", "date"]},
+    {"key": "status", "label": "状态", "required": False,
+     "aliases": ["状态", "milestone status", "status"]},
+    {"key": "description", "label": "描述", "required": False,
+     "aliases": ["描述", "说明", "description"]},
+]
+
+MEMBER_FIELDS: List[Dict[str, Any]] = [
+    {"key": "project_code", "label": "项目编号", "required": True,
+     "aliases": ["项目编号", "编号", "所属项目", "project code"]},
+    {"key": "username", "label": "成员", "required": True,
+     "aliases": ["成员", "姓名", "用户名", "账号", "member", "user"]},
+    {"key": "project_role", "label": "项目角色", "required": False,
+     "aliases": ["项目角色", "角色", "role"]},
+]
+
 PROJECT_STATUS = {
     "规划中": "planning", "规划": "planning", "planning": "planning",
     "进行中": "in_progress", "执行中": "in_progress", "in_progress": "in_progress",
@@ -113,6 +137,32 @@ TASK_TYPE = {
     "缺陷": "bug", "bug": "bug", "bug修复": "bug",
     "改进": "improvement", "优化": "improvement", "improvement": "improvement",
     "调研": "research", "研究": "research", "research": "research",
+}
+
+MILESTONE_STATUS = {
+    "待开始": "pending", "未开始": "pending", "pending": "pending",
+    "进行中": "in_progress", "in_progress": "in_progress",
+    "已达成": "reached", "已完成": "reached", "reached": "reached",
+    "已延期": "delayed", "延期": "delayed", "delayed": "delayed",
+}
+
+MEMBER_ROLE = {
+    "项目经理": "pm", "pm": "pm",
+    "技术负责人": "tech_lead", "技术主管": "tech_lead", "tech_lead": "tech_lead",
+    "开发": "developer", "developer": "developer",
+    "测试": "qa", "qa": "qa",
+    "设计": "designer", "designer": "designer",
+    "观察者": "viewer", "只读": "viewer", "viewer": "viewer",
+}
+
+MILESTONE_STATUS_LABEL = {
+    "pending": "待开始", "in_progress": "进行中",
+    "reached": "已达成", "delayed": "已延期",
+}
+
+MEMBER_ROLE_LABEL = {
+    "pm": "项目经理", "tech_lead": "技术负责人", "developer": "开发",
+    "qa": "测试", "designer": "设计", "viewer": "观察者",
 }
 
 PROJECT_STATUS_LABEL = {
@@ -222,7 +272,7 @@ def _style_sheet(ws, headers: List[str], widths: List[int], sample: List[List[An
 
 
 def build_template() -> bytes:
-    """生成导入模板（含示例行与填写说明）。"""
+    """生成导入模板（4 个数据表 + 填写说明）。"""
     wb = Workbook()
 
     ws = wb.active
@@ -248,25 +298,47 @@ def build_template() -> bytes:
         ]],
     )
 
+    ws = wb.create_sheet(SHEET_MILESTONE)
+    _style_sheet(
+        ws,
+        [f["label"] + ("*" if f["required"] else "") for f in MILESTONE_FIELDS],
+        [16, 24, 14, 10, 36],
+        [[
+            "DEMO-2026", "示例：一期上线", "2026-05-30", "待开始", "示例数据，导入前请删除本行",
+        ]],
+    )
+
+    ws = wb.create_sheet(SHEET_MEMBER)
+    _style_sheet(
+        ws,
+        [f["label"] + ("*" if f["required"] else "") for f in MEMBER_FIELDS],
+        [16, 16, 16],
+        [["DEMO-2026", "zhangsan", "开发"]],
+    )
+
     help_ws = wb.create_sheet(SHEET_HELP)
     help_ws.column_dimensions["A"].width = 18
     help_ws.column_dimensions["B"].width = 12
     help_ws.column_dimensions["C"].width = 62
 
     rows = [("字段", "是否必填", "说明 / 可选值")]
-    for f in PROJECT_FIELDS:
-        hint = _field_hint(f["key"], "project")
-        rows.append((f["label"], "必填" if f["required"] else "选填", hint))
-    rows.append(("", "", ""))
-    for f in TASK_FIELDS:
-        hint = _field_hint(f["key"], "task")
-        rows.append((f["label"], "必填" if f["required"] else "选填", hint))
-    rows.append(("", "", ""))
+    for label, fields, kind in (
+        ("【项目】", PROJECT_FIELDS, "project"),
+        ("【任务】", TASK_FIELDS, "task"),
+        ("【里程碑】", MILESTONE_FIELDS, "milestone"),
+        ("【成员】", MEMBER_FIELDS, "member"),
+    ):
+        rows.append((label, "", ""))
+        for f in fields:
+            rows.append((f["label"], "必填" if f["required"] else "选填", _field_hint(f["key"], kind)))
+        rows.append(("", "", ""))
+
     rows.append(("使用说明", "", "1. 列名可以改、顺序可以调，导入时会自动识别并允许手动映射"))
-    rows.append(("", "", "2. 任务通过「项目编号」关联到项目，编号需与项目表一致"))
+    rows.append(("", "", "2. 任务/里程碑/成员都通过「项目编号」关联到项目"))
     rows.append(("", "", "3. 负责人填用户名或昵称；留空则默认为当前登录用户"))
     rows.append(("", "", "4. 日期支持 2026-03-01 / 2026/3/1 / Excel 日期格式"))
-    rows.append(("", "", "5. 示例行请删除后再导入；单次最多 2000 行"))
+    rows.append(("", "", "5. 只有「项目」表是必需的，其余三张表可以留空或删掉"))
+    rows.append(("", "", "6. 示例行请删除后再导入；单次最多 2000 行"))
 
     for r in rows:
         help_ws.append(list(r))
@@ -303,6 +375,20 @@ def _field_hint(key: str, kind: str) -> str:
     }
     if kind == "task" and key == "status":
         return "待办 / 进行中 / 待评审 / 测试中 / 已完成（默认 待办）"
+    if kind == "milestone":
+        return {
+            "project_code": "必须与「项目」表中的项目编号一致",
+            "title": "里程碑名称，最长 128 字",
+            "due_date": "计划达成日期，必填",
+            "status": "待开始 / 进行中 / 已达成 / 已延期（默认 待开始）",
+            "description": "多行文本",
+        }.get(key, "")
+    if kind == "member":
+        return {
+            "project_code": "必须与「项目」表中的项目编号一致",
+            "username": "用户名或昵称，必须是系统里已有的账号",
+            "project_role": "项目经理 / 技术负责人 / 开发 / 测试 / 设计 / 观察者（默认 开发）",
+        }.get(key, "")
     return hints.get(key, "")
 
 
@@ -320,15 +406,20 @@ CSV_COLUMNS: List[Tuple[str, List[str]]] = [
     ("project_status", ["项目状态", "project status"]),
     ("project_priority", ["项目优先级", "project priority"]),
     ("project_budget", ["预算", "项目预算", "budget"]),
-    ("project_start", ["项目开始日期", "开始日期"]),
-    ("project_end", ["项目结束日期", "结束日期"]),
-    ("task_title", ["任务标题", "任务名称", "标题", "task"]),
+    ("project_start", ["项目开始日期"]),
+    ("project_end", ["项目结束日期"]),
+    ("task_title", ["任务标题", "任务名称", "task"]),
     ("task_status", ["任务状态", "task status"]),
     ("task_priority", ["任务优先级", "task priority"]),
-    ("task_type", ["任务类型", "类型细分", "task type"]),
+    ("task_type", ["任务类型", "task type"]),
     ("task_estimate", ["预估工时", "工时", "estimate"]),
     ("task_start", ["任务开始日期"]),
     ("task_due", ["任务截止日期", "截止日期", "due"]),
+    ("milestone_title", ["里程碑名称", "里程碑", "milestone"]),
+    ("milestone_due", ["里程碑日期", "计划日期"]),
+    ("milestone_status", ["里程碑状态"]),
+    ("member_name", ["成员", "姓名", "member"]),
+    ("member_role", ["项目角色", "角色", "role"]),
     ("owner", ["负责人", "指派人", "owner", "assignee"]),
     ("tags", ["标签", "tags"]),
     ("description", ["描述", "说明", "description"]),
@@ -336,17 +427,40 @@ CSV_COLUMNS: List[Tuple[str, List[str]]] = [
 
 CSV_HEADERS = [
     "类型", "项目编号", "项目名称", "项目状态", "项目优先级", "预算",
-    "项目开始日期", "项目结束日期", "任务标题", "任务状态", "任务优先级",
-    "任务类型", "预估工时", "任务开始日期", "任务截止日期",
+    "项目开始日期", "项目结束日期",
+    "任务标题", "任务状态", "任务优先级", "任务类型", "预估工时",
+    "任务开始日期", "任务截止日期",
+    "里程碑名称", "里程碑日期", "里程碑状态",
+    "成员", "项目角色",
     "负责人", "标签", "描述",
 ]
 
 CSV_SAMPLES = [
     ["项目", "DEMO-2026", "示例：客户门户重构", "进行中", "高", 120000,
-     "2026-03-01", "2026-06-30", "", "", "", "", "", "", "", "admin", "", "示例项目行，导入前请删除"],
+     "2026-03-01", "2026-06-30",
+     "", "", "", "", "", "", "",
+     "", "", "",
+     "", "",
+     "admin", "", "示例项目行，导入前请删除"],
     ["任务", "DEMO-2026", "", "", "", "",
-     "", "", "示例：登录页改版", "进行中", "高",
-     "需求", 16, "2026-03-01", "2026-03-15", "zhangsan", "前端,UI", "示例任务行，导入前请删除"],
+     "", "",
+     "示例：登录页改版", "进行中", "高", "需求", 16,
+     "2026-03-01", "2026-03-15",
+     "", "", "",
+     "", "",
+     "zhangsan", "前端,UI", "示例任务行，导入前请删除"],
+    ["里程碑", "DEMO-2026", "", "", "", "",
+     "", "",
+     "", "", "", "", "", "", "",
+     "示例：一期上线", "2026-05-30", "待开始",
+     "", "",
+     "", "", "示例里程碑行，导入前请删除"],
+    ["成员", "DEMO-2026", "", "", "", "",
+     "", "",
+     "", "", "", "", "", "", "",
+     "", "", "",
+     "zhangsan", "开发",
+     "", "", ""],
 ]
 
 
@@ -370,15 +484,49 @@ def _decode_text(raw: bytes) -> str:
     raise ValueError("无法识别文件编码，请另存为 UTF-8 或 GBK 后重试")
 
 
-def _parse_csv(raw: bytes) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
-    """把单表 CSV 拆成 项目行 / 任务行，结构与 xlsx 解析结果保持一致。"""
+# 记录类型 → 内部 sheet key
+_CSV_KIND = {
+    "项目": "project", "project": "project", "p": "project",
+    "任务": "task", "task": "task", "t": "task",
+    "里程碑": "milestone", "milestone": "milestone", "m": "milestone",
+    "成员": "member", "member": "member", "u": "member",
+}
+
+# 每类记录取哪些列 → 内部字段 key
+_CSV_FIELD_MAP = {
+    "project": {
+        "project_code": "code", "project_name": "name", "owner": "owner",
+        "project_status": "status", "project_priority": "priority",
+        "project_budget": "budget", "project_start": "start_date",
+        "project_end": "end_date", "description": "description",
+    },
+    "task": {
+        "project_code": "project_code", "task_title": "title", "owner": "assignee",
+        "task_status": "status", "task_priority": "priority",
+        "task_type": "task_type", "task_estimate": "estimated_hours",
+        "task_start": "start_date", "task_due": "due_date",
+        "tags": "tags", "description": "description",
+    },
+    "milestone": {
+        "project_code": "project_code", "milestone_title": "title",
+        "milestone_due": "due_date", "milestone_status": "status",
+        "description": "description",
+    },
+    "member": {
+        "project_code": "project_code", "member_name": "username",
+        "member_role": "project_role",
+    },
+}
+
+
+def _parse_csv(raw: bytes) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
+    """把单表 CSV 拆成四类记录，结构与 xlsx 解析结果保持一致。"""
     text = _decode_text(raw)
     reader = csv.DictReader(io.StringIO(text))
     headers = [h.strip() for h in (reader.fieldnames or [])]
     if not headers:
         raise ValueError("CSV 文件没有表头")
 
-    # 表头 → 内部列 key
     alias: Dict[str, str] = {}
     for key, names in CSV_COLUMNS:
         for n in names:
@@ -390,76 +538,38 @@ def _parse_csv(raw: bytes) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], 
         if key and key not in col_of:
             col_of[key] = h
 
-    if "record_type" not in col_of:
-        # 没有类型列时按任务处理，但要求有任务标题
-        if "task_title" not in col_of:
-            raise ValueError("CSV 缺少「类型」列，且找不到「任务标题」列")
+    if "record_type" not in col_of and "task_title" not in col_of:
+        raise ValueError("CSV 缺少「类型」列，且找不到「任务标题」列")
 
-    proj_rows: List[Dict[str, Any]] = []
-    task_rows: List[Dict[str, Any]] = []
+    rows: Dict[str, List[Dict[str, Any]]] = {k: [] for k in _CSV_FIELD_MAP}
 
     for idx, raw_row in enumerate(reader, start=2):
         row = {(k or "").strip(): (v or "").strip() for k, v in raw_row.items() if k}
         if not any(row.values()):
             continue
 
-        kind = row.get(col_of.get("record_type", ""), "").strip().lower()
-        is_project = kind in ("项目", "project", "p")
+        kind_text = row.get(col_of.get("record_type", ""), "").strip().lower()
+        kind = _CSV_KIND.get(kind_text, "task")  # 没写类型时按任务处理
+        field_map = _CSV_FIELD_MAP[kind]
 
-        if is_project:
-            proj_rows.append({
-                "_row": idx,
-                "code": row.get(col_of.get("project_code", ""), ""),
-                "name": row.get(col_of.get("project_name", ""), ""),
-                "owner": row.get(col_of.get("owner", ""), ""),
-                "status": row.get(col_of.get("project_status", ""), ""),
-                "priority": row.get(col_of.get("project_priority", ""), ""),
-                "budget": row.get(col_of.get("project_budget", ""), ""),
-                "start_date": row.get(col_of.get("project_start", ""), ""),
-                "end_date": row.get(col_of.get("project_end", ""), ""),
-                "description": row.get(col_of.get("description", ""), ""),
-            })
-        else:
-            task_rows.append({
-                "_row": idx,
-                "project_code": row.get(col_of.get("project_code", ""), ""),
-                "title": row.get(col_of.get("task_title", ""), ""),
-                "assignee": row.get(col_of.get("owner", ""), ""),
-                "status": row.get(col_of.get("task_status", ""), ""),
-                "priority": row.get(col_of.get("task_priority", ""), ""),
-                "task_type": row.get(col_of.get("task_type", ""), ""),
-                "estimated_hours": row.get(col_of.get("task_estimate", ""), ""),
-                "start_date": row.get(col_of.get("task_start", ""), ""),
-                "due_date": row.get(col_of.get("task_due", ""), ""),
-                "tags": row.get(col_of.get("tags", ""), ""),
-                "description": row.get(col_of.get("description", ""), ""),
-            })
+        item: Dict[str, Any] = {"_row": idx}
+        for csv_key, internal in field_map.items():
+            item[internal] = row.get(col_of.get(csv_key, ""), "")
+        rows[kind].append(item)
 
-    # CSV 是一张表，但校验按「项目表 / 任务表」两套字段分别做，
-    # 所以映射也要按两套字段 key 输出，否则必填列检查会失效。
-    PROJ_KEY = {
-        "project_name": "name", "project_code": "code", "owner": "owner",
-        "project_status": "status", "project_priority": "priority",
-        "project_budget": "budget", "project_start": "start_date",
-        "project_end": "end_date", "description": "description",
-    }
-    TASK_KEY = {
-        "project_code": "project_code", "task_title": "title", "owner": "assignee",
-        "task_status": "status", "task_priority": "priority",
-        "task_type": "task_type", "task_estimate": "estimated_hours",
-        "task_start": "start_date", "task_due": "due_date",
-        "tags": "tags", "description": "description",
-    }
-
-    def build_meta(key_map):
+    # 映射信息按「sheet → 列 → 字段」给出，供前端展示
+    metas: Dict[str, Dict[str, Any]] = {}
+    for kind, field_map in _CSV_FIELD_MAP.items():
         mapping = {}
         for i, h in enumerate(headers):
             internal = alias.get(_norm(h))
-            if internal and internal in key_map and key_map[internal] not in mapping.values():
-                mapping[str(i)] = key_map[internal]
-        return {"headers": headers, "mapping": mapping, "header_row": 1}
+            if internal and internal in field_map:
+                target = field_map[internal]
+                if target not in mapping.values():
+                    mapping[str(i)] = target
+        metas[kind] = {"headers": headers, "mapping": mapping, "header_row": 1}
 
-    return proj_rows, task_rows, build_meta(PROJ_KEY), build_meta(TASK_KEY)
+    return rows, metas
 
 
 # ─── 解析与校验 ──────────────────────────────────────────────────────────────
@@ -521,7 +631,7 @@ def parse_import(
     filename: str = "",
     mapping: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
-    """解析上传文件，返回 sheet 内容、列映射与校验问题（不写库）。
+    """解析上传文件，返回各表内容、列映射与校验问题（不写库）。
 
     返回里的 `rows` 是完整解析结果，供 execute 使用；对外接口会把它剔除。
     """
@@ -531,10 +641,11 @@ def parse_import(
     name = (filename or "").lower()
 
     if name.endswith(".csv"):
-        proj_rows, task_rows, proj_meta, task_meta = _parse_csv(file_bytes)
-        if len(proj_rows) > MAX_ROWS or len(task_rows) > MAX_ROWS:
-            raise ValueError(f"单次导入最多 {MAX_ROWS} 行")
-        return _build_result(proj_rows, task_rows, proj_meta, task_meta, "csv")
+        rows, metas = _parse_csv(file_bytes)
+        for key in rows:
+            if len(rows[key]) > MAX_ROWS:
+                raise ValueError(f"单次导入最多 {MAX_ROWS} 行")
+        return _build_result(rows, metas, "csv")
 
     if not name.endswith((".xlsx", ".xlsm")):
         raise ValueError("仅支持 .xlsx 或 .csv 格式，请用下载的模板填写")
@@ -551,47 +662,64 @@ def parse_import(
                     return wb[actual]
         return None
 
-    proj_ws = pick([SHEET_PROJECT, "项目信息", "Projects"])
-    task_ws = pick([SHEET_TASK, "任务列表", "Tasks"])
-    if proj_ws is None and task_ws is None:
+    specs = [
+        ("project", [SHEET_PROJECT, "项目信息", "Projects"], PROJECT_FIELDS),
+        ("task", [SHEET_TASK, "任务列表", "Tasks"], TASK_FIELDS),
+        ("milestone", [SHEET_MILESTONE, "里程碑计划", "Milestones"], MILESTONE_FIELDS),
+        ("member", [SHEET_MEMBER, "项目成员", "Members"], MEMBER_FIELDS),
+    ]
+
+    found = {key: pick(names) for key, names, _ in specs}
+    if found["project"] is None and found["task"] is None:
         raise ValueError(f"未找到「{SHEET_PROJECT}」或「{SHEET_TASK}」工作表，请使用下载的模板")
 
-    mapping = mapping or {}
-    proj_rows, proj_meta = (
-        _read_sheet(proj_ws, PROJECT_FIELDS, mapping.get("project"))
-        if proj_ws else ([], {"headers": [], "mapping": {}, "header_row": 0})
-    )
-    task_rows, task_meta = (
-        _read_sheet(task_ws, TASK_FIELDS, mapping.get("task"))
-        if task_ws else ([], {"headers": [], "mapping": {}, "header_row": 0})
-    )
+    overrides = mapping or {}
+    rows: Dict[str, List[Dict[str, Any]]] = {}
+    metas: Dict[str, Dict[str, Any]] = {}
+    for key, _, fields in specs:
+        ws = found[key]
+        if ws is None:
+            rows[key], metas[key] = [], {"headers": [], "mapping": {}, "header_row": 0}
+        else:
+            rows[key], metas[key] = _read_sheet(ws, fields, overrides.get(key))
 
-    if len(proj_rows) > MAX_ROWS or len(task_rows) > MAX_ROWS:
-        raise ValueError(f"单次导入最多 {MAX_ROWS} 行")
+    for key in rows:
+        if len(rows[key]) > MAX_ROWS:
+            raise ValueError(f"单次导入最多 {MAX_ROWS} 行")
 
-    return _build_result(proj_rows, task_rows, proj_meta, task_meta, "xlsx")
+    return _build_result(rows, metas, "xlsx")
 
 
 def _build_result(
-    proj_rows: List[Dict[str, Any]],
-    task_rows: List[Dict[str, Any]],
-    proj_meta: Dict[str, Any],
-    task_meta: Dict[str, Any],
+    rows: Dict[str, List[Dict[str, Any]]],
+    metas: Dict[str, Dict[str, Any]],
     fmt: str,
 ) -> Dict[str, Any]:
     """把解析结果整理成对外结构（含必填列检查）。"""
     issues: List[Dict[str, Any]] = []
 
-    # 必填列是否被识别
-    for kind, meta, fields, label in (
-        ("project", proj_meta, PROJECT_FIELDS, SHEET_PROJECT),
-        ("task", task_meta, TASK_FIELDS, SHEET_TASK),
-    ):
-        mapped = set(meta["mapping"].values())
+    field_map = {
+        "project": PROJECT_FIELDS,
+        "task": TASK_FIELDS,
+        "milestone": MILESTONE_FIELDS,
+        "member": MEMBER_FIELDS,
+    }
+    sheet_label = {
+        "project": SHEET_PROJECT, "task": SHEET_TASK,
+        "milestone": SHEET_MILESTONE, "member": SHEET_MEMBER,
+    }
+
+    # 必填列是否被识别（表里一行数据都没有时不算问题）
+    for key, fields in field_map.items():
+        meta = metas.get(key) or {}
+        if not meta.get("headers"):
+            continue
+        mapped = set((meta.get("mapping") or {}).values())
         for f in fields:
             if f["required"] and f["key"] not in mapped:
                 issues.append({
-                    "level": "error", "sheet": label, "row": meta["header_row"],
+                    "level": "error", "sheet": sheet_label[key],
+                    "row": meta.get("header_row", 1),
                     "field": f["label"],
                     "message": f"未找到「{f['label']}」列，请在文件中保留该列或调整映射",
                 })
@@ -599,36 +727,42 @@ def _build_result(
     return {
         "format": fmt,
         "sheets": {
-            "project": {"rows": proj_rows[:5], "total": len(proj_rows), **proj_meta},
-            "task": {"rows": task_rows[:5], "total": len(task_rows), **task_meta},
+            key: {
+                "rows": rows[key][:5],
+                "total": len(rows[key]),
+                "headers": metas.get(key, {}).get("headers", []),
+                "mapping": metas.get(key, {}).get("mapping", {}),
+                "header_row": metas.get(key, {}).get("header_row", 0),
+            }
+            for key in field_map
         },
-        "fields": {"project": PROJECT_FIELDS, "task": TASK_FIELDS},
+        "fields": field_map,
         "issues": issues,
-        "rows": {"project": proj_rows, "task": task_rows},
+        "rows": rows,
     }
 
 
-def validate_rows(
-    db: Session,
-    proj_rows: List[Dict[str, Any]],
-    task_rows: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """校验数据行，返回问题列表（error 阻断导入，warning 仅提示）。"""
+def validate_rows(db: Session, rows: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """校验所有记录，返回问题列表（error 阻断导入，warning 仅提示）。"""
     issues: List[Dict[str, Any]] = []
 
     def add(level: str, sheet: str, row: int, message: str):
         issues.append({"level": level, "sheet": sheet, "row": row, "message": message})
 
     existing_codes = {c[0] for c in db.query(Project.code).all()}
-    usernames = {}
+    usernames: Dict[str, int] = {}
     for uid, username, nickname in db.query(User.id, User.username, User.nickname).all():
         usernames[_norm(username)] = uid
         if nickname:
             usernames.setdefault(_norm(nickname), uid)
 
-    seen_codes = set()
-    valid_projects = 0
+    proj_rows = rows.get("project", [])
+    task_rows = rows.get("task", [])
+    ms_rows = rows.get("milestone", [])
+    member_rows = rows.get("member", [])
 
+    # ── 项目 ──────────────────────────────────────────────────────────
+    file_codes = set()
     for r in proj_rows:
         row = r["_row"]
         name = str(r.get("name") or "").strip()
@@ -637,44 +771,48 @@ def validate_rows(
             add("error", SHEET_PROJECT, row, "项目名称不能为空")
         if not code:
             add("error", SHEET_PROJECT, row, "项目编号不能为空")
-        elif _norm(code) in seen_codes:
+        elif _norm(code) in file_codes:
             add("error", SHEET_PROJECT, row, f"项目编号「{code}」在文件中重复")
         elif code in existing_codes:
-            add("warning", SHEET_PROJECT, row, f"项目编号「{code}」已存在，导入时将跳过该项目及其任务")
+            add("warning", SHEET_PROJECT, row, f"项目编号「{code}」已存在，导入时将跳过该项目")
         else:
-            seen_codes.add(_norm(code))
-            valid_projects += 1
+            file_codes.add(_norm(code))
 
         owner = str(r.get("owner") or "").strip()
         if owner and _norm(owner) not in usernames:
             add("warning", SHEET_PROJECT, row, f"负责人「{owner}」不存在，将使用当前登录用户")
 
-        for key in ("status", "priority"):
-            if str(r.get(key) or "").strip():
-                table = PROJECT_STATUS if key == "status" else PRIORITY
-                _, ok = _enum(r.get(key), table, "")
-                if not ok:
-                    add("warning", SHEET_PROJECT, row, f"「{r.get(key)}」不是有效的{'状态' if key == 'status' else '优先级'}，将使用默认值")
+        for key, table, label in (
+            ("status", PROJECT_STATUS, "状态"),
+            ("priority", PRIORITY, "优先级"),
+        ):
+            if str(r.get(key) or "").strip() and not _enum(r.get(key), table, "")[1]:
+                add("warning", SHEET_PROJECT, row, f"「{r.get(key)}」不是有效的{label}，将使用默认值")
 
         for key in ("start_date", "end_date"):
             if str(r.get(key) or "").strip() and _to_date(r.get(key)) is None:
                 add("error", SHEET_PROJECT, row, f"{'开始' if key == 'start_date' else '结束'}日期格式无法识别")
 
-        s, e = _to_date(r.get("start_date")), _to_date(r.get("end_date"))
-        if s and e and e < s:
+        sd, ed = _to_date(r.get("start_date")), _to_date(r.get("end_date"))
+        if sd and ed and ed < sd:
             add("error", SHEET_PROJECT, row, "结束日期早于开始日期")
 
-    # 任务：项目编号必须在文件或库中存在
+    def check_project_ref(sheet: str, row: int, code: str) -> bool:
+        """项目编号必须在本文件的项目表或数据库中。"""
+        if not code:
+            add("error", sheet, row, "项目编号不能为空")
+            return False
+        if _norm(code) in file_codes or code in existing_codes:
+            return True
+        add("error", sheet, row, f"项目编号「{code}」在「项目」表中不存在")
+        return False
+
+    # ── 任务 ──────────────────────────────────────────────────────────
     for r in task_rows:
         row = r["_row"]
-        code = str(r.get("project_code") or "").strip()
-        title = str(r.get("title") or "").strip()
-        if not title:
+        if not str(r.get("title") or "").strip():
             add("error", SHEET_TASK, row, "任务标题不能为空")
-        if not code:
-            add("error", SHEET_TASK, row, "项目编号不能为空")
-        elif _norm(code) not in seen_codes and code not in existing_codes:
-            add("error", SHEET_TASK, row, f"项目编号「{code}」在「项目」表中不存在")
+        check_project_ref(SHEET_TASK, row, str(r.get("project_code") or "").strip())
 
         assignee = str(r.get("assignee") or "").strip()
         if assignee and _norm(assignee) not in usernames:
@@ -685,14 +823,55 @@ def validate_rows(
             ("priority", PRIORITY, "优先级"),
             ("task_type", TASK_TYPE, "类型"),
         ):
-            if str(r.get(key) or "").strip():
-                _, ok = _enum(r.get(key), table, "")
-                if not ok:
-                    add("warning", SHEET_TASK, row, f"「{r.get(key)}」不是有效的{label}，将使用默认值")
+            if str(r.get(key) or "").strip() and not _enum(r.get(key), table, "")[1]:
+                add("warning", SHEET_TASK, row, f"「{r.get(key)}」不是有效的{label}，将使用默认值")
 
         for key in ("start_date", "due_date"):
             if str(r.get(key) or "").strip() and _to_date(r.get(key)) is None:
                 add("error", SHEET_TASK, row, "日期格式无法识别")
+
+    # ── 里程碑 ────────────────────────────────────────────────────────
+    seen_ms = set()
+    for r in ms_rows:
+        row = r["_row"]
+        code = str(r.get("project_code") or "").strip()
+        title = str(r.get("title") or "").strip()
+        check_project_ref(SHEET_MILESTONE, row, code)
+
+        if not title:
+            add("error", SHEET_MILESTONE, row, "里程碑名称不能为空")
+        elif (_norm(code), _norm(title)) in seen_ms:
+            add("warning", SHEET_MILESTONE, row, f"里程碑「{title}」在本文件中重复，仅导入第一个")
+        else:
+            seen_ms.add((_norm(code), _norm(title)))
+
+        if not str(r.get("due_date") or "").strip():
+            add("error", SHEET_MILESTONE, row, "计划日期不能为空")
+        elif _to_date(r.get("due_date")) is None:
+            add("error", SHEET_MILESTONE, row, "计划日期格式无法识别")
+
+        if str(r.get("status") or "").strip() and not _enum(r.get("status"), MILESTONE_STATUS, "")[1]:
+            add("warning", SHEET_MILESTONE, row, f"「{r.get('status')}」不是有效的里程碑状态，将使用默认值")
+
+    # ── 成员 ──────────────────────────────────────────────────────────
+    seen_member = set()
+    for r in member_rows:
+        row = r["_row"]
+        code = str(r.get("project_code") or "").strip()
+        username = str(r.get("username") or "").strip()
+        check_project_ref(SHEET_MEMBER, row, code)
+
+        if not username:
+            add("error", SHEET_MEMBER, row, "成员不能为空")
+        elif _norm(username) not in usernames:
+            add("error", SHEET_MEMBER, row, f"成员「{username}」在系统中不存在")
+        elif (_norm(code), _norm(username)) in seen_member:
+            add("warning", SHEET_MEMBER, row, f"成员「{username}」在本文件中重复，仅导入一次")
+        else:
+            seen_member.add((_norm(code), _norm(username)))
+
+        if str(r.get("project_role") or "").strip() and not _enum(r.get("project_role"), MEMBER_ROLE, "")[1]:
+            add("warning", SHEET_MEMBER, row, f"「{r.get('project_role')}」不是有效的项目角色，将使用默认值")
 
     return issues
 
@@ -701,11 +880,10 @@ def validate_rows(
 
 def execute_import(
     db: Session,
-    proj_rows: List[Dict[str, Any]],
-    task_rows: List[Dict[str, Any]],
+    rows: Dict[str, List[Dict[str, Any]]],
     current_user: User,
 ) -> Dict[str, Any]:
-    """写入数据库。已存在的项目编号跳过（连同其任务）。"""
+    """写入数据库。已存在的项目编号跳过；同项目内同名任务/里程碑跳过。"""
     usernames: Dict[str, int] = {}
     for uid, username, nickname in db.query(User.id, User.username, User.nickname).all():
         usernames[_norm(username)] = uid
@@ -717,7 +895,8 @@ def execute_import(
     skipped_projects = 0
     code_to_id: Dict[str, int] = {}
 
-    for r in proj_rows:
+    # ── 项目 ──────────────────────────────────────────────────────────
+    for r in rows.get("project", []):
         code = str(r.get("code") or "").strip()
         name = str(r.get("name") or "").strip()
         if not code or not name:
@@ -750,15 +929,18 @@ def execute_import(
         existing[code] = code
         created_projects += 1
 
-    # 已存在的项目也允许追加任务
-    for code in {str(r.get("project_code") or "").strip() for r in task_rows}:
+    # 已存在的项目也允许追加任务/里程碑/成员
+    for code in {
+        str(r.get("project_code") or "").strip()
+        for key in ("task", "milestone", "member")
+        for r in rows.get(key, [])
+    }:
         if code and code not in code_to_id:
-            row = db.query(Project.id).filter(Project.code == code).first()
-            if row:
-                code_to_id[code] = row[0]
+            hit = db.query(Project.id).filter(Project.code == code).first()
+            if hit:
+                code_to_id[code] = hit[0]
 
-    # 已存在的任务标题（按项目）：让「导出 → 再导入」保持幂等，
-    # 同时仍允许向已有项目补充新任务。
+    # ── 任务 ──────────────────────────────────────────────────────────
     existing_titles: Dict[int, set] = {}
     for pid in set(code_to_id.values()):
         existing_titles[pid] = {
@@ -767,7 +949,7 @@ def execute_import(
 
     created_tasks = 0
     skipped_tasks = 0
-    for r in task_rows:
+    for r in rows.get("task", []):
         code = str(r.get("project_code") or "").strip()
         title = str(r.get("title") or "").strip()
         pid = code_to_id.get(code)
@@ -804,12 +986,83 @@ def execute_import(
         ))
         created_tasks += 1
 
+    # ── 里程碑 ────────────────────────────────────────────────────────
+    existing_ms: Dict[int, set] = {}
+    for pid in set(code_to_id.values()):
+        existing_ms[pid] = {
+            _norm(t[0]) for t in db.query(Milestone.title).filter(Milestone.project_id == pid).all()
+        }
+
+    created_milestones = 0
+    skipped_milestones = 0
+    order_counter: Dict[int, int] = {}
+    for r in rows.get("milestone", []):
+        code = str(r.get("project_code") or "").strip()
+        title = str(r.get("title") or "").strip()
+        due = _to_date(r.get("due_date"))
+        pid = code_to_id.get(code)
+        if not pid or not title or not due:
+            skipped_milestones += 1
+            continue
+
+        seen = existing_ms.setdefault(pid, set())
+        if _norm(title) in seen:
+            skipped_milestones += 1
+            continue
+        seen.add(_norm(title))
+
+        status, _ = _enum(r.get("status"), MILESTONE_STATUS, "pending")
+        order_num = order_counter.get(pid, 0)
+        order_counter[pid] = order_num + 1
+
+        db.add(Milestone(
+            project_id=pid,
+            title=title[:128],
+            description=str(r.get("description") or "").strip() or None,
+            due_date=due,
+            status=status,
+            order_num=order_num,
+        ))
+        created_milestones += 1
+
+    # ── 成员 ──────────────────────────────────────────────────────────
+    existing_members: Dict[int, set] = {}
+    for pid in set(code_to_id.values()):
+        existing_members[pid] = {
+            m[0] for m in db.query(ProjectMember.user_id).filter(ProjectMember.project_id == pid).all()
+        }
+
+    created_members = 0
+    skipped_members = 0
+    for r in rows.get("member", []):
+        code = str(r.get("project_code") or "").strip()
+        username = str(r.get("username") or "").strip()
+        pid = code_to_id.get(code)
+        uid = usernames.get(_norm(username))
+        if not pid or not uid:
+            skipped_members += 1
+            continue
+
+        seen = existing_members.setdefault(pid, set())
+        if uid in seen:
+            skipped_members += 1
+            continue
+        seen.add(uid)
+
+        role, _ = _enum(r.get("project_role"), MEMBER_ROLE, "developer")
+        db.add(ProjectMember(project_id=pid, user_id=uid, project_role=role))
+        created_members += 1
+
     db.commit()
     return {
         "projects_created": created_projects,
         "projects_skipped": skipped_projects,
         "tasks_created": created_tasks,
         "tasks_skipped": skipped_tasks,
+        "milestones_created": created_milestones,
+        "milestones_skipped": skipped_milestones,
+        "members_created": created_members,
+        "members_skipped": skipped_members,
     }
 
 
@@ -871,6 +1124,48 @@ def export_projects(db: Session, projects: List[Project]) -> bytes:
                 t.due_date.strftime("%Y-%m-%d") if t.due_date else "",
                 t.tags or "",
                 t.description or "",
+            ])
+
+    # ── 里程碑 ────────────────────────────────────────────────────────
+    ws = wb.create_sheet(SHEET_MILESTONE)
+    _style_sheet(
+        ws,
+        [f["label"] + ("*" if f["required"] else "") for f in MILESTONE_FIELDS],
+        [16, 24, 14, 10, 36],
+        [],
+    )
+    if projects:
+        ms_list = (
+            db.query(Milestone).filter(Milestone.project_id.in_(ids))
+            .order_by(Milestone.project_id.asc(), Milestone.order_num.asc()).all()
+        )
+        for m in ms_list:
+            ws.append([
+                code_by_id.get(m.project_id, ""),
+                m.title,
+                m.due_date.strftime("%Y-%m-%d") if m.due_date else "",
+                MILESTONE_STATUS_LABEL.get(m.status, m.status),
+                m.description or "",
+            ])
+
+    # ── 成员 ──────────────────────────────────────────────────────────
+    ws = wb.create_sheet(SHEET_MEMBER)
+    _style_sheet(
+        ws,
+        [f["label"] + ("*" if f["required"] else "") for f in MEMBER_FIELDS],
+        [16, 16, 16],
+        [],
+    )
+    if projects:
+        members = (
+            db.query(ProjectMember).filter(ProjectMember.project_id.in_(ids))
+            .order_by(ProjectMember.project_id.asc()).all()
+        )
+        for mem in members:
+            ws.append([
+                code_by_id.get(mem.project_id, ""),
+                mem.user.username if mem.user else "",
+                MEMBER_ROLE_LABEL.get(mem.project_role, mem.project_role),
             ])
 
     buf = io.BytesIO()

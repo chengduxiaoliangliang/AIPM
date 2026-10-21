@@ -2,8 +2,8 @@
   <el-dialog
     v-model="visible"
     title="导入项目与任务"
-    width="880px"
-    top="6vh"
+    width="900px"
+    top="5vh"
     @closed="reset"
   >
     <!-- ── 第一步：下载模板 + 上传 ─────────────────────────────── -->
@@ -11,10 +11,10 @@
       <div class="hint-box">
         <div class="hint-title">导入说明</div>
         <ul>
-          <li>先下载模板，按「项目」「任务」两个工作表填写，示例行请删除</li>
+          <li>Excel 模板含「项目 / 任务 / 里程碑 / 成员」四张表，只有「项目」表是必需的</li>
           <li>列名可以改、顺序可以调——导入时会自动识别，识别不出可手动映射</li>
-          <li>任务通过「项目编号」关联项目；项目编号已存在时跳过该项目</li>
-          <li>同一项目内同名任务会自动跳过，可安全地重复导入</li>
+          <li>任务、里程碑、成员都通过「项目编号」关联项目</li>
+          <li>项目编号已存在时跳过该项目；同项目内同名任务/里程碑、同一成员自动跳过</li>
         </ul>
       </div>
 
@@ -26,7 +26,7 @@
           下载 CSV 模板
         </el-button>
         <span class="template-tip">
-          Excel 分「项目/任务」两个表；CSV 用「类型」列区分，适合从其他系统导出
+          Excel 四表更完整；CSV 单表用「类型」列区分，适合从其他系统导出
         </span>
       </div>
 
@@ -53,8 +53,9 @@
           <span class="h-file" :title="h.filename">{{ h.filename }}</span>
           <span class="h-meta">{{ h.username }} · {{ h.created_at }}</span>
           <span class="h-count">
-            项目 {{ h.projects_created }}<template v-if="h.projects_skipped">（跳过 {{ h.projects_skipped }}）</template>
-            · 任务 {{ h.tasks_created }}<template v-if="h.tasks_skipped">（跳过 {{ h.tasks_skipped }}）</template>
+            项目 {{ h.projects_created }} · 任务 {{ h.tasks_created }}
+            <template v-if="h.milestones_created"> · 里程碑 {{ h.milestones_created }}</template>
+            <template v-if="h.members_created"> · 成员 {{ h.members_created }}</template>
           </span>
         </div>
       </div>
@@ -63,8 +64,9 @@
     <!-- ── 第二步：预览与校验 ───────────────────────────────────── -->
     <div v-else class="preview-step" v-loading="loading">
       <div class="summary-row">
-        <span class="chip">项目 {{ preview.summary.projects }} 行</span>
-        <span class="chip">任务 {{ preview.summary.tasks }} 行</span>
+        <span v-for="s in sheetDefs" :key="s.key" class="chip">
+          {{ s.short }} {{ preview.sheets[s.key].total }} 行
+        </span>
         <span class="chip" :class="{ danger: preview.summary.errors > 0 }">
           错误 {{ preview.summary.errors }}
         </span>
@@ -81,7 +83,7 @@
         :closable="false"
         show-icon
         title="存在错误，修正后才能导入"
-        description="错误通常来自必填缺失、项目编号对不上或日期格式无法识别，请按下方提示修改文件后重新上传。"
+        description="错误通常来自必填缺失、项目编号对不上、成员不存在或日期格式无法识别，请按下方提示修改文件后重新上传。"
         class="alert"
       />
 
@@ -90,50 +92,41 @@
       </div>
 
       <el-tabs v-else v-model="activeSheet" class="map-tabs">
-        <el-tab-pane label="项目表" name="project">
-          <div class="map-legend">文件中的列 → 对应的系统字段，留空表示忽略该列</div>
-          <div class="map-grid">
-            <div v-for="(header, idx) in headers('project')" :key="idx" class="map-item">
-              <span class="map-src" :title="header">{{ header || `第 ${idx + 1} 列` }}</span>
-              <span class="map-arrow">→</span>
-              <el-select
-                v-model="mappingModel.project[String(idx)]"
-                size="small"
-                clearable
-                placeholder="忽略此列"
-              >
-                <el-option
-                  v-for="f in preview.fields.project"
-                  :key="f.key"
-                  :label="f.label + (f.required ? ' *' : '')"
-                  :value="f.key"
-                />
-              </el-select>
-            </div>
+        <el-tab-pane
+          v-for="s in sheetDefs"
+          :key="s.key"
+          :label="`${s.label}（${preview.sheets[s.key].total}）`"
+          :name="s.key"
+        >
+          <div v-if="!preview.sheets[s.key].headers.length" class="empty-sheet">
+            文件中没有「{{ s.label }}」工作表，将跳过
           </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="任务表" name="task">
-          <div class="map-legend">文件中的列 → 对应的系统字段，留空表示忽略该列</div>
-          <div class="map-grid">
-            <div v-for="(header, idx) in headers('task')" :key="idx" class="map-item">
-              <span class="map-src" :title="header">{{ header || `第 ${idx + 1} 列` }}</span>
-              <span class="map-arrow">→</span>
-              <el-select
-                v-model="mappingModel.task[String(idx)]"
-                size="small"
-                clearable
-                placeholder="忽略此列"
+          <template v-else>
+            <div class="map-legend">文件中的列 → 对应的系统字段，留空表示忽略该列</div>
+            <div class="map-grid">
+              <div
+                v-for="(header, idx) in preview.sheets[s.key].headers"
+                :key="idx"
+                class="map-item"
               >
-                <el-option
-                  v-for="f in preview.fields.task"
-                  :key="f.key"
-                  :label="f.label + (f.required ? ' *' : '')"
-                  :value="f.key"
-                />
-              </el-select>
+                <span class="map-src" :title="header">{{ header || `第 ${idx + 1} 列` }}</span>
+                <span class="map-arrow">→</span>
+                <el-select
+                  v-model="mappingModel[s.key][String(idx)]"
+                  size="small"
+                  clearable
+                  placeholder="忽略此列"
+                >
+                  <el-option
+                    v-for="f in preview.fields[s.key]"
+                    :key="f.key"
+                    :label="f.label + (f.required ? ' *' : '')"
+                    :value="f.key"
+                  />
+                </el-select>
+              </div>
             </div>
-          </div>
+          </template>
         </el-tab-pane>
       </el-tabs>
 
@@ -161,8 +154,10 @@
       </div>
 
       <div class="sample">
-        <div class="issue-title">样例数据（前 5 行，按当前映射解析）</div>
-        <el-table :data="preview.sheets[activeSheet].rows" size="small" max-height="220">
+        <div class="issue-title">
+          样例数据 · {{ currentSheetLabel }}（前 5 行，按当前映射解析）
+        </div>
+        <el-table :data="preview.sheets[activeSheet].rows" size="small" max-height="200">
           <el-table-column
             v-for="key in mappedKeys"
             :key="key"
@@ -200,11 +195,19 @@ import {
   executeProjectImportApi,
   getImportHistoryApi,
   type ImportPreview,
-  type ImportLogItem
+  type ImportLogItem,
+  type ImportSheetKey
 } from '@/api/project'
 import { saveBlob } from '@/utils/download'
 
 const emit = defineEmits<{ (e: 'done'): void }>()
+
+const SHEET_DEFS: { key: ImportSheetKey; label: string; short: string }[] = [
+  { key: 'project', label: '项目表', short: '项目' },
+  { key: 'task', label: '任务表', short: '任务' },
+  { key: 'milestone', label: '里程碑表', short: '里程碑' },
+  { key: 'member', label: '成员表', short: '成员' }
+]
 
 const visible = ref(false)
 const downloading = ref(false)
@@ -212,13 +215,21 @@ const loading = ref(false)
 const importing = ref(false)
 const file = ref<File | null>(null)
 const preview = ref<ImportPreview | null>(null)
-const activeSheet = ref<'project' | 'task'>('project')
+const activeSheet = ref<ImportSheetKey>('project')
 const history = ref<ImportLogItem[]>([])
 
-const mappingModel = reactive<{ project: Record<string, string>; task: Record<string, string> }>({
+const sheetDefs = SHEET_DEFS
+
+const mappingModel = reactive<Record<string, Record<string, string>>>({
   project: {},
-  task: {}
+  task: {},
+  milestone: {},
+  member: {}
 })
+
+const currentSheetLabel = computed(
+  () => SHEET_DEFS.find((s) => s.key === activeSheet.value)?.label || ''
+)
 
 function open() {
   visible.value = true
@@ -238,12 +249,7 @@ function reset() {
   preview.value = null
   file.value = null
   activeSheet.value = 'project'
-  mappingModel.project = {}
-  mappingModel.task = {}
-}
-
-function headers(sheet: 'project' | 'task'): string[] {
-  return preview.value?.sheets[sheet].headers || []
+  for (const key of Object.keys(mappingModel)) mappingModel[key] = {}
 }
 
 /** 当前 sheet 已映射的字段 key，用于样例表格列 */
@@ -290,9 +296,11 @@ async function loadPreview(mapping?: Record<string, any>) {
     preview.value = res.data
     if (!mapping) {
       // 首次解析：用服务端的自动映射初始化
-      mappingModel.project = { ...res.data.sheets.project.mapping }
-      mappingModel.task = { ...res.data.sheets.task.mapping }
-      activeSheet.value = res.data.sheets.project.headers.length ? 'project' : 'task'
+      for (const s of SHEET_DEFS) {
+        mappingModel[s.key] = { ...(res.data.sheets[s.key].mapping || {}) }
+      }
+      const first = SHEET_DEFS.find((s) => res.data.sheets[s.key].headers.length)
+      activeSheet.value = first?.key || 'project'
     }
   } catch (e: any) {
     ElMessage.error(e?.message || '文件解析失败')
@@ -303,10 +311,9 @@ async function loadPreview(mapping?: Record<string, any>) {
 }
 
 async function revalidate() {
-  await loadPreview({
-    project: cleanMapping(mappingModel.project),
-    task: cleanMapping(mappingModel.task)
-  })
+  const payload: Record<string, Record<string, string>> = {}
+  for (const s of SHEET_DEFS) payload[s.key] = cleanMapping(mappingModel[s.key])
+  await loadPreview(payload)
   ElMessage.success('已按新映射重新校验')
 }
 
@@ -317,12 +324,13 @@ function cleanMapping(m: Record<string, string>): Record<string, string> {
 async function doImport() {
   if (!file.value || !preview.value) return
 
-  const { projects, tasks, errors } = preview.value.summary
+  const { projects, tasks, milestones, members, errors } = preview.value.summary
   if (errors > 0) return
 
   try {
     await ElMessageBox.confirm(
-      `将导入 ${projects} 个项目、${tasks} 个任务。项目编号已存在时会跳过。`,
+      `将导入 ${projects} 个项目、${tasks} 个任务、${milestones} 个里程碑、${members} 个成员。` +
+        '已存在的项目编号会跳过。',
       '确认导入',
       { confirmButtonText: '开始导入', cancelButtonText: '再检查一下' }
     )
@@ -332,16 +340,17 @@ async function doImport() {
 
   importing.value = true
   try {
-    const res = await executeProjectImportApi(file.value, {
-      project: cleanMapping(mappingModel.project),
-      task: cleanMapping(mappingModel.task)
-    })
+    const payload: Record<string, Record<string, string>> = {}
+    for (const s of SHEET_DEFS) payload[s.key] = cleanMapping(mappingModel[s.key])
+
+    const res = await executeProjectImportApi(file.value, payload)
     const d = res.data
+    const skipped =
+      d.projects_skipped + d.tasks_skipped + d.milestones_skipped + d.members_skipped
     ElMessage.success(
-      `导入完成：新增 ${d.projects_created} 个项目、${d.tasks_created} 个任务` +
-        (d.projects_skipped || d.tasks_skipped
-          ? `；跳过 ${d.projects_skipped} 个项目、${d.tasks_skipped} 个任务`
-          : '')
+      `导入完成：新增 ${d.projects_created} 项目 / ${d.tasks_created} 任务 / ` +
+        `${d.milestones_created} 里程碑 / ${d.members_created} 成员` +
+        (skipped ? `；跳过 ${skipped} 条已存在记录` : '')
     )
     await loadHistory()
     visible.value = false
@@ -385,6 +394,7 @@ defineExpose({ open })
   align-items: center;
   gap: 12px;
   margin-bottom: 14px;
+  flex-wrap: wrap;
 
   .template-tip {
     font-size: 12px;
@@ -408,6 +418,52 @@ defineExpose({ open })
   }
 }
 
+.upload-tip {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 6px;
+}
+
+.summary-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+
+  .chip {
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--bg-subtle);
+    color: var(--text-regular);
+
+    &.danger {
+      background: var(--danger-light);
+      color: var(--danger-color);
+    }
+
+    &.warn {
+      background: var(--warning-light);
+      color: var(--warning-color);
+    }
+  }
+
+  .file-name {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-faint);
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.alert {
+  margin-bottom: 12px;
+}
+
 .csv-note {
   font-size: 12.5px;
   color: var(--text-muted);
@@ -416,6 +472,99 @@ defineExpose({ open })
   border-radius: var(--radius-sm);
   padding: 8px 12px;
   margin-bottom: 10px;
+}
+
+.empty-sheet {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  padding: 14px 0;
+}
+
+.map-legend {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin: 0 0 8px;
+}
+
+.map-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 8px 14px;
+  padding: 4px 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.map-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  .map-src {
+    flex: 0 0 92px;
+    font-size: 12px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .map-arrow {
+    flex: 0 0 auto;
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+
+  :deep(.el-select) {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.map-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 4px;
+
+  .map-hint {
+    font-size: 12px;
+    color: var(--text-faint);
+  }
+}
+
+.issue-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin: 14px 0 8px;
+}
+
+.issue-list {
+  max-height: 170px;
+  overflow-y: auto;
+}
+
+.issue {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12.5px;
+  border-bottom: 1px dashed var(--border-color);
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  .issue-loc {
+    flex: 0 0 auto;
+    color: var(--text-faint);
+  }
+
+  .issue-msg {
+    color: var(--text-regular);
+  }
 }
 
 .history {
@@ -460,139 +609,5 @@ defineExpose({ open })
     margin-left: auto;
     color: var(--text-regular);
   }
-}
-
-.upload-tip {
-  font-size: 12px;
-  color: var(--text-faint);
-  margin-top: 6px;
-}
-
-.summary-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-
-  .chip {
-    font-size: 12px;
-    padding: 2px 10px;
-    border-radius: 999px;
-    background: var(--bg-subtle);
-    color: var(--text-regular);
-
-    &.danger {
-      background: var(--danger-light);
-      color: var(--danger-color);
-    }
-
-    &.warn {
-      background: var(--warning-light);
-      color: var(--warning-color);
-    }
-  }
-
-  .file-name {
-    margin-left: auto;
-    font-size: 12px;
-    color: var(--text-faint);
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-}
-
-.alert {
-  margin-bottom: 12px;
-}
-
-.map-legend {
-  font-size: 12px;
-  color: var(--text-faint);
-  margin: 0 0 8px;
-}
-
-.map-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 8px 14px;
-  padding: 4px 0;
-}
-
-.map-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-
-  .map-src {
-    flex: 0 0 96px;
-    font-size: 12px;
-    color: var(--text-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .map-arrow {
-    flex: 0 0 auto;
-    color: var(--text-faint);
-    font-size: 12px;
-  }
-
-  :deep(.el-select) {
-    flex: 1;
-    min-width: 0;
-  }
-}
-
-.map-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 8px 0 4px;
-
-  .map-hint {
-    font-size: 12px;
-    color: var(--text-faint);
-  }
-}
-
-.issue-title {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-main);
-  margin: 14px 0 8px;
-}
-
-.issue-list {
-  max-height: 190px;
-  overflow-y: auto;
-}
-
-.issue {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 5px 0;
-  font-size: 12.5px;
-  border-bottom: 1px dashed var(--border-color);
-
-  &:last-child {
-    border-bottom: none;
-  }
-
-  .issue-loc {
-    flex: 0 0 auto;
-    color: var(--text-faint);
-  }
-
-  .issue-msg {
-    color: var(--text-regular);
-  }
-}
-
-.sample {
-  margin-top: 4px;
 }
 </style>

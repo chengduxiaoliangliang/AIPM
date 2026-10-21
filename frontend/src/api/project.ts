@@ -114,12 +114,21 @@ export interface ImportSheetMeta {
   total: number
 }
 
+export type ImportSheetKey = 'project' | 'task' | 'milestone' | 'member'
+
 export interface ImportPreview {
   format: 'xlsx' | 'csv'
-  sheets: { project: ImportSheetMeta; task: ImportSheetMeta }
-  fields: { project: ImportField[]; task: ImportField[] }
+  sheets: Record<ImportSheetKey, ImportSheetMeta>
+  fields: Record<ImportSheetKey, ImportField[]>
   issues: ImportIssue[]
-  summary: { projects: number; tasks: number; errors: number; warnings: number }
+  summary: {
+    projects: number
+    tasks: number
+    milestones: number
+    members: number
+    errors: number
+    warnings: number
+  }
 }
 
 export interface ImportResult {
@@ -127,6 +136,10 @@ export interface ImportResult {
   projects_skipped: number
   tasks_created: number
   tasks_skipped: number
+  milestones_created: number
+  milestones_skipped: number
+  members_created: number
+  members_skipped: number
   warnings?: ImportIssue[]
 }
 
@@ -184,6 +197,10 @@ export interface ImportLogItem {
   projects_skipped: number
   tasks_created: number
   tasks_skipped: number
+  milestones_created: number
+  milestones_skipped: number
+  members_created: number
+  members_skipped: number
   error_count: number
   warning_count: number
   status: 'success' | 'failed'
