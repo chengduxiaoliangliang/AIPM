@@ -6,6 +6,7 @@ from app.models.issue import Issue
 from app.models.document import Document
 from app.models.audit_log import AuditLog
 from app.models.import_log import ImportLog
+from app.models.import_preset import ImportPreset
 from app.models.kb import (
     KBSource, KBPage, KBLink, KBIngestJob, KBLintReport, KBPageVersion,
     KBNotifyPref,
@@ -29,6 +30,7 @@ __all__ = [
     "Document",
     "AuditLog",
     "ImportLog",
+    "ImportPreset",
     "KBSource",
     "KBPage",
     "KBLink",

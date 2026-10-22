@@ -11,6 +11,7 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine
 from app.models import (
     ImportLog,
+    ImportPreset,
     Department, Role, Permission, User,
     Project, ProjectMember, Milestone,
     Task, SubTask, TaskComment,

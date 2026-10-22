@@ -102,6 +102,36 @@
         CSV 按表头自动识别列。如需自定义列名，请对照模板说明调整表头，或改用 Excel 模板。
       </div>
 
+      <div v-if="preview.format !== 'csv'" class="preset-bar">
+        <span class="preset-label">列映射预设</span>
+        <el-select
+          v-model="selectedPresetId"
+          size="small"
+          clearable
+          placeholder="套用已有预设"
+          style="width: 210px"
+          @change="onPresetChange"
+        >
+          <el-option v-for="p in presets" :key="p.id" :label="p.name" :value="p.id" />
+        </el-select>
+        <el-button size="small" @click="savePreset">保存当前映射</el-button>
+        <el-button
+          v-if="selectedPresetId"
+          link
+          type="danger"
+          size="small"
+          @click="removePreset"
+        >
+          删除
+        </el-button>
+        <span v-if="matchedPreset && !selectedPresetId" class="preset-match">
+          检测到匹配的预设「{{ matchedPreset.name }}」
+          <el-button link type="primary" size="small" @click="applyPreset(matchedPreset.id)">
+            应用
+          </el-button>
+        </span>
+      </div>
+
       <el-tabs v-else v-model="activeSheet" class="map-tabs">
         <el-tab-pane
           v-for="s in sheetDefs"
@@ -206,7 +236,11 @@ import {
   executeProjectImportApi,
   getImportHistoryApi,
   rollbackImportApi,
+  listImportPresetsApi,
+  saveImportPresetApi,
+  deleteImportPresetApi,
   type ImportPreview,
+  type ImportPreset,
   type ImportLogItem,
   type ImportSheetKey
 } from '@/api/project'
@@ -229,6 +263,8 @@ const file = ref<File | null>(null)
 const preview = ref<ImportPreview | null>(null)
 const activeSheet = ref<ImportSheetKey>('project')
 const history = ref<ImportLogItem[]>([])
+const presets = ref<ImportPreset[]>([])
+const selectedPresetId = ref<number | null>(null)
 
 const sheetDefs = SHEET_DEFS
 
@@ -246,6 +282,93 @@ const currentSheetLabel = computed(
 function open() {
   visible.value = true
   loadHistory()
+  loadPresets()
+}
+
+async function loadPresets() {
+  try {
+    const res = await listImportPresetsApi()
+    presets.value = res.data || []
+  } catch {
+    presets.value = []
+  }
+}
+
+/** 表头指纹一致 → 认为这个预设适用于当前文件 */
+const matchedPreset = computed(() => {
+  if (!preview.value) return null
+  return presets.value.find((p) => p.signature && p.signature === preview.value!.signature) || null
+})
+
+async function onPresetChange(id: number | null) {
+  if (id) await applyPreset(id)
+}
+
+async function applyPreset(id: number) {
+  const preset = presets.value.find((p) => p.id === id)
+  if (!preset) return
+  for (const s of SHEET_DEFS) {
+    mappingModel[s.key] = { ...(preset.mapping[s.key] || {}) }
+  }
+  selectedPresetId.value = id
+  const payload: Record<string, Record<string, string>> = {}
+  for (const s of SHEET_DEFS) payload[s.key] = cleanMapping(mappingModel[s.key])
+  await loadPreview(payload)
+  ElMessage.success(`已应用预设「${preset.name}」`)
+}
+
+async function savePreset() {
+  if (!preview.value) return
+  let name = ''
+  try {
+    const res = await ElMessageBox.prompt(
+      '给这套列映射起个名字，下次遇到同类文件可一键套用',
+      '保存为预设',
+      {
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+        inputPlaceholder: '例如：Jira 导出模板',
+        inputValidator: (v: string) => (v && v.trim() ? true : '请输入名称')
+      }
+    )
+    name = res.value.trim()
+  } catch {
+    return
+  }
+
+  const mapping: Record<string, Record<string, string>> = {}
+  for (const s of SHEET_DEFS) mapping[s.key] = cleanMapping(mappingModel[s.key])
+
+  try {
+    await saveImportPresetApi({ name, signature: preview.value.signature, mapping })
+    ElMessage.success('预设已保存')
+    await loadPresets()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '保存失败')
+  }
+}
+
+async function removePreset() {
+  const id = selectedPresetId.value
+  if (!id) return
+  const preset = presets.value.find((p) => p.id === id)
+  try {
+    await ElMessageBox.confirm(`确定删除预设「${preset?.name || ''}」吗？`, '删除预设', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+  } catch {
+    return
+  }
+  try {
+    await deleteImportPresetApi(id)
+    selectedPresetId.value = null
+    ElMessage.success('已删除')
+    await loadPresets()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '删除失败')
+  }
 }
 
 async function loadHistory() {
@@ -511,6 +634,29 @@ defineExpose({ open })
   font-size: 12.5px;
   color: var(--text-faint);
   padding: 14px 0;
+}
+
+.preset-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 4px 0 10px;
+  padding: 8px 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+
+  .preset-label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .preset-match {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-left: auto;
+  }
 }
 
 .map-legend {

@@ -116,8 +116,18 @@ export interface ImportSheetMeta {
 
 export type ImportSheetKey = 'project' | 'task' | 'milestone' | 'member'
 
+export interface ImportPreset {
+  id: number
+  name: string
+  username: string
+  signature: string
+  mapping: Record<string, Record<string, string>>
+  created_at: string
+}
+
 export interface ImportPreview {
   format: 'xlsx' | 'csv'
+  signature: string
   sheets: Record<ImportSheetKey, ImportSheetMeta>
   fields: Record<ImportSheetKey, ImportField[]>
   issues: ImportIssue[]
@@ -233,5 +243,31 @@ export function rollbackImportApi(logId: number) {
     url: `/projects/import/${logId}/rollback`,
     method: 'POST',
     timeout: 120000
+  })
+}
+
+export function listImportPresetsApi() {
+  return request<ImportPreset[]>({
+    url: '/projects/import/presets',
+    method: 'GET'
+  })
+}
+
+export function saveImportPresetApi(payload: {
+  name: string
+  signature: string
+  mapping: Record<string, Record<string, string>>
+}) {
+  return request<{ id: number }>({
+    url: '/projects/import/presets',
+    method: 'POST',
+    data: payload
+  })
+}
+
+export function deleteImportPresetApi(presetId: number) {
+  return request<null>({
+    url: `/projects/import/presets/${presetId}`,
+    method: 'DELETE'
   })
 }

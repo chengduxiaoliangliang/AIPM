@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -13,6 +13,7 @@ from app.models.project import Project, ProjectMember, Milestone
 from app.models.task import Task
 from app.models.user import User
 from app.models.import_log import ImportLog
+from app.models.import_preset import ImportPreset
 from app.schemas.common import ResponseModel, PaginatedData
 from app.schemas.project import (
     ProjectCreate, ProjectUpdate, ProjectOut, ProjectDetailOut,
@@ -351,6 +352,89 @@ def rollback_import_batch(
     db.commit()
 
     return ResponseModel(code=200, message=log.message, data={"deleted": deleted})
+
+
+@router.get("/import/presets", response_model=ResponseModel[List[Dict[str, Any]]])
+def list_import_presets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """列映射预设（团队共享，按创建时间倒序）。"""
+    rows = db.query(ImportPreset).order_by(ImportPreset.created_at.desc()).limit(50).all()
+    out = []
+    for r in rows:
+        try:
+            mapping = json.loads(r.mapping)
+        except Exception:
+            mapping = {}
+        out.append({
+            "id": r.id,
+            "name": r.name,
+            "username": r.username,
+            "signature": r.signature or "",
+            "mapping": mapping,
+            "created_at": r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
+        })
+    return ResponseModel(code=200, message="success", data=out)
+
+
+@router.post("/import/presets", response_model=ResponseModel[Dict[str, Any]])
+def save_import_preset(
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """保存当前列映射为预设。同名同来源的会被覆盖，避免堆一堆重复项。"""
+    name = str(payload.get("name") or "").strip()
+    mapping = payload.get("mapping") or {}
+    signature = str(payload.get("signature") or "")[:64]
+
+    if not name:
+        raise CustomException(message="预设名称不能为空")
+    if not isinstance(mapping, dict) or not any(mapping.values()):
+        raise CustomException(message="当前没有可保存的列映射")
+
+    existing = (
+        db.query(ImportPreset)
+        .filter(ImportPreset.name == name[:64], ImportPreset.signature == signature)
+        .first()
+    )
+    if existing:
+        existing.mapping = json.dumps(mapping, ensure_ascii=False)
+        existing.user_id = current_user.id
+        existing.username = current_user.username
+        db.commit()
+        return ResponseModel(code=200, message="预设已更新", data={"id": existing.id})
+
+    preset = ImportPreset(
+        user_id=current_user.id,
+        username=current_user.username,
+        name=name[:64],
+        signature=signature,
+        mapping=json.dumps(mapping, ensure_ascii=False),
+    )
+    db.add(preset)
+    db.commit()
+    db.refresh(preset)
+    return ResponseModel(code=200, message="预设已保存", data={"id": preset.id})
+
+
+@router.delete("/import/presets/{preset_id}", response_model=ResponseModel[None])
+def delete_import_preset(
+    preset_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """删除预设。只能删自己创建的，超管除外。"""
+    preset = db.query(ImportPreset).filter(ImportPreset.id == preset_id).first()
+    if not preset:
+        raise NotFoundException("预设不存在")
+    if preset.user_id != current_user.id and not current_user.is_superuser:
+        raise CustomException(message="只能删除自己创建的预设")
+
+    db.delete(preset)
+    db.commit()
+    return ResponseModel(code=200, message="已删除", data=None)
 
 
 @router.get("/export")

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import re
@@ -725,8 +726,16 @@ def _build_result(
                     "message": f"未找到「{f['label']}」列，请在文件中保留该列或调整映射",
                 })
 
+    # 表头指纹：用于判断某个映射预设是否适用于当前文件
+    sig_src = "|".join(
+        f"{key}:" + ",".join(_norm(h) for h in (metas.get(key, {}).get("headers") or []))
+        for key in ("project", "task", "milestone", "member")
+    )
+    signature = hashlib.sha1(sig_src.encode("utf-8")).hexdigest()[:32]
+
     return {
         "format": fmt,
+        "signature": signature,
         "sheets": {
             key: {
                 "rows": rows[key][:5],
