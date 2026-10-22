@@ -64,6 +64,8 @@ def ensure_columns():
         ("pm_import_logs", "milestones_skipped", "INT NOT NULL DEFAULT 0"),
         ("pm_import_logs", "members_created", "INT NOT NULL DEFAULT 0"),
         ("pm_import_logs", "members_skipped", "INT NOT NULL DEFAULT 0"),
+        ("pm_import_logs", "created_ids", "TEXT NULL"),
+        ("pm_import_logs", "rolled_back_at", "DATETIME NULL"),
     ]
     with engine.begin() as conn:
         for table, column, ddl in wanted:

@@ -205,6 +205,8 @@ export interface ImportLogItem {
   warning_count: number
   status: 'success' | 'failed'
   message: string
+  can_rollback: boolean
+  rolled_back: boolean
   created_at: string
 }
 
@@ -224,4 +226,12 @@ export async function exportProjectsApi(ids: number[]): Promise<Blob> {
     timeout: 120000
   })
   return res.data as Blob
+}
+
+export function rollbackImportApi(logId: number) {
+  return request<{ deleted: Record<string, number> }>({
+    url: `/projects/import/${logId}/rollback`,
+    method: 'POST',
+    timeout: 120000
+  })
 }

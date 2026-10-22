@@ -1,5 +1,6 @@
 import io
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -245,6 +246,8 @@ async def execute_import(
             warning_count=len(warnings),
             status=status,
             message=message[:512],
+            created_ids=json.dumps(result.get("created_ids") or {}, ensure_ascii=False)
+            if result else None,
         ))
         db.commit()
 
@@ -305,8 +308,49 @@ def import_history(
         "warning_count": r.warning_count,
         "status": r.status,
         "message": r.message,
+        "can_rollback": (
+            r.status == "success" and bool(r.created_ids) and r.rolled_back_at is None
+        ),
+        "rolled_back": r.rolled_back_at is not None,
         "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
     } for r in rows])
+
+
+@router.post("/import/{log_id}/rollback", response_model=ResponseModel[Dict[str, Any]])
+def rollback_import_batch(
+    log_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """回滚一次导入：只删除该批次创建的记录。
+
+    如果该批次创建的项目里已经出现了后续新增的内容，会拒绝回滚（避免误删）。
+    """
+    log = db.query(ImportLog).filter(ImportLog.id == log_id).first()
+    if not log:
+        raise NotFoundException("导入记录不存在")
+    if log.status != "success":
+        raise CustomException(message="只有成功的导入才能回滚")
+    if log.rolled_back_at:
+        raise CustomException(message="该批次已经回滚过了")
+
+    try:
+        deleted = project_io.rollback_import(db, log)
+    except project_io.RollbackConflict as exc:
+        raise CustomException(message=str(exc))
+    except ValueError as exc:
+        raise CustomException(message=str(exc))
+
+    log.rolled_back_at = datetime.utcnow()
+    log.message = (
+        f"已回滚：删除 {deleted.get('project', 0)} 个项目、"
+        f"{deleted.get('task', 0)} 个任务、"
+        f"{deleted.get('milestone', 0)} 个里程碑、"
+        f"{deleted.get('member', 0)} 个成员"
+    )
+    db.commit()
+
+    return ResponseModel(code=200, message=log.message, data={"deleted": deleted})
 
 
 @router.get("/export")

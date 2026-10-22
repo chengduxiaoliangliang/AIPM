@@ -57,6 +57,17 @@
             <template v-if="h.milestones_created"> · 里程碑 {{ h.milestones_created }}</template>
             <template v-if="h.members_created"> · 成员 {{ h.members_created }}</template>
           </span>
+          <el-button
+            v-if="h.can_rollback"
+            link
+            type="danger"
+            size="small"
+            class="h-rollback"
+            @click="rollback(h)"
+          >
+            回滚
+          </el-button>
+          <span v-else-if="h.rolled_back" class="h-rolled">已回滚</span>
         </div>
       </div>
     </div>
@@ -194,6 +205,7 @@ import {
   previewProjectImportApi,
   executeProjectImportApi,
   getImportHistoryApi,
+  rollbackImportApi,
   type ImportPreview,
   type ImportLogItem,
   type ImportSheetKey
@@ -262,6 +274,27 @@ const mappedKeys = computed(() => {
 function fieldLabel(key: string): string {
   const list = preview.value?.fields[activeSheet.value] || []
   return list.find((f) => f.key === key)?.label || key
+}
+
+async function rollback(h: ImportLogItem) {
+  try {
+    await ElMessageBox.confirm(
+      `将删除这次导入创建的 ${h.projects_created} 个项目、${h.tasks_created} 个任务、` +
+        `${h.milestones_created} 个里程碑、${h.members_created} 个成员。此操作不可撤销。`,
+      '回滚这次导入',
+      { confirmButtonText: '确认回滚', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await rollbackImportApi(h.id)
+    ElMessage.success(res.message || '回滚完成')
+    await loadHistory()
+    emit('done')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '回滚失败')
+  }
 }
 
 async function downloadTemplate(format: 'xlsx' | 'csv') {
@@ -608,6 +641,16 @@ defineExpose({ open })
   .h-count {
     margin-left: auto;
     color: var(--text-regular);
+  }
+
+  .h-rollback {
+    flex: 0 0 auto;
+  }
+
+  .h-rolled {
+    flex: 0 0 auto;
+    font-size: 11.5px;
+    color: var(--text-faint);
   }
 }
 </style>

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -894,6 +895,10 @@ def execute_import(
     created_projects = 0
     skipped_projects = 0
     code_to_id: Dict[str, int] = {}
+    created_project_ids: List[int] = []
+    # 负责人会被自动加成 pm 成员，这条也属于本批次创建，必须记进 created_ids，
+    # 否则回滚时会被误判为"导入后新增的成员"而拒绝。
+    member_objs: List[ProjectMember] = []
 
     # ── 项目 ──────────────────────────────────────────────────────────
     for r in rows.get("project", []):
@@ -924,8 +929,13 @@ def execute_import(
         )
         db.add(project)
         db.flush()
-        db.add(ProjectMember(project_id=project.id, user_id=owner_id, project_role="pm"))
+        owner_member = ProjectMember(
+            project_id=project.id, user_id=owner_id, project_role="pm"
+        )
+        db.add(owner_member)
+        member_objs.append(owner_member)
         code_to_id[code] = project.id
+        created_project_ids.append(project.id)
         existing[code] = code
         created_projects += 1
 
@@ -949,6 +959,7 @@ def execute_import(
 
     created_tasks = 0
     skipped_tasks = 0
+    task_objs: List[Task] = []
     for r in rows.get("task", []):
         code = str(r.get("project_code") or "").strip()
         title = str(r.get("title") or "").strip()
@@ -970,7 +981,7 @@ def execute_import(
         priority, _ = _enum(r.get("priority"), PRIORITY, "medium")
         task_type, _ = _enum(r.get("task_type"), TASK_TYPE, "task")
 
-        db.add(Task(
+        task_obj = Task(
             project_id=pid,
             title=title[:255],
             description=str(r.get("description") or "").strip() or None,
@@ -983,7 +994,9 @@ def execute_import(
             start_date=_to_date(r.get("start_date")),
             due_date=_to_date(r.get("due_date")),
             tags=str(r.get("tags") or "").strip() or None,
-        ))
+        )
+        db.add(task_obj)
+        task_objs.append(task_obj)
         created_tasks += 1
 
     # ── 里程碑 ────────────────────────────────────────────────────────
@@ -995,6 +1008,7 @@ def execute_import(
 
     created_milestones = 0
     skipped_milestones = 0
+    milestone_objs: List[Milestone] = []
     order_counter: Dict[int, int] = {}
     for r in rows.get("milestone", []):
         code = str(r.get("project_code") or "").strip()
@@ -1015,14 +1029,16 @@ def execute_import(
         order_num = order_counter.get(pid, 0)
         order_counter[pid] = order_num + 1
 
-        db.add(Milestone(
+        ms_obj = Milestone(
             project_id=pid,
             title=title[:128],
             description=str(r.get("description") or "").strip() or None,
             due_date=due,
             status=status,
             order_num=order_num,
-        ))
+        )
+        db.add(ms_obj)
+        milestone_objs.append(ms_obj)
         created_milestones += 1
 
     # ── 成员 ──────────────────────────────────────────────────────────
@@ -1050,11 +1066,22 @@ def execute_import(
         seen.add(uid)
 
         role, _ = _enum(r.get("project_role"), MEMBER_ROLE, "developer")
-        db.add(ProjectMember(project_id=pid, user_id=uid, project_role=role))
+        mem_obj = ProjectMember(project_id=pid, user_id=uid, project_role=role)
+        db.add(mem_obj)
+        member_objs.append(mem_obj)
         created_members += 1
+
+    db.flush()
+    created_ids = {
+        "project": created_project_ids,
+        "task": [t.id for t in task_objs],
+        "milestone": [m.id for m in milestone_objs],
+        "member": [m.id for m in member_objs],
+    }
 
     db.commit()
     return {
+        "created_ids": created_ids,
         "projects_created": created_projects,
         "projects_skipped": skipped_projects,
         "tasks_created": created_tasks,
@@ -1176,3 +1203,59 @@ def export_projects(db: Session, projects: List[Project]) -> bytes:
 def export_project(db: Session, project: Project) -> bytes:
     """导出单个项目（项目 1 行 + 其全部任务）。"""
     return export_projects(db, [project])
+
+
+# ─── 回滚 ────────────────────────────────────────────────────────────────────
+
+class RollbackConflict(Exception):
+    """导入创建的项目在之后又有了新内容，整体回滚会误删，必须拒绝。"""
+
+
+def rollback_import(db: Session, log) -> Dict[str, int]:
+    """按导入批次精确回滚：只删本批次创建的记录。
+
+    安全策略：如果本批次创建的项目里，出现了「本批次之外」的任务/里程碑/成员，
+    说明用户已经在此基础上继续工作了，整体回滚会误删这些内容，直接拒绝。
+    这种情况请手动删除具体记录。
+    """
+    raw = getattr(log, "created_ids", None)
+    if not raw:
+        raise ValueError("该批次没有记录创建明细，无法回滚（可能是升级前的历史数据）")
+
+    ids = json.loads(raw)
+    project_ids = [int(x) for x in ids.get("project", [])]
+    task_ids = [int(x) for x in ids.get("task", [])]
+    ms_ids = [int(x) for x in ids.get("milestone", [])]
+    member_ids = [int(x) for x in ids.get("member", [])]
+
+    if project_ids:
+        checks = (
+            ("任务", Task, Task.project_id, task_ids),
+            ("里程碑", Milestone, Milestone.project_id, ms_ids),
+            ("成员", ProjectMember, ProjectMember.project_id, member_ids),
+        )
+        for label, model, pid_col, allowed in checks:
+            q = db.query(model.id).filter(pid_col.in_(project_ids))
+            if allowed:
+                q = q.filter(~model.id.in_(allowed))
+            extra = q.first()
+            if extra:
+                raise RollbackConflict(
+                    f"本次导入创建的项目中已有新的{label}记录，"
+                    f"回滚会一并删除它们。请先手动清理，或只删除具体记录。"
+                )
+
+    deleted: Dict[str, int] = {}
+    for key, model, id_list in (
+        ("member", ProjectMember, member_ids),
+        ("milestone", Milestone, ms_ids),
+        ("task", Task, task_ids),
+        ("project", Project, project_ids),
+    ):
+        if id_list:
+            deleted[key] = db.query(model).filter(model.id.in_(id_list)).delete(
+                synchronize_session=False
+            )
+
+    db.commit()
+    return deleted

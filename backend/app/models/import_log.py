@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 
 from app.database import Base
 
@@ -31,5 +31,10 @@ class ImportLog(Base):
     warning_count = Column(Integer, default=0)
     status = Column(String(16), default="success")  # success / failed
     message = Column(String(512), nullable=True)
+
+    # 本批次创建了哪些记录（JSON：{"project": [1,2], "task": [...], ...}）
+    # 有了它才能精确回滚，而不是按时间瞎删
+    created_ids = Column(Text, nullable=True)
+    rolled_back_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
