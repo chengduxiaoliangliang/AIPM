@@ -119,22 +119,25 @@ html, body, #app {
 }
 
 /* ── Inputs ────────────────────────────────────────────────────────────── */
+/* 不用 !important：本文件在 element-plus 之后加载，同优先级即可覆盖；
+   一旦加 !important，任何需要不同输入框外观的页面（如深色登录页）都改不动。
+   背景走变量，暗色模式由 dark.scss 接管。 */
 .el-input__wrapper,
 .el-select__wrapper,
 .el-textarea__inner {
   border-radius: var(--radius-sm);
-  background-color: #ffffff !important;
-  box-shadow: 0 0 0 1px var(--border-color) inset !important;
+  background-color: var(--bg-card);
+  box-shadow: 0 0 0 1px var(--border-color) inset;
   transition: box-shadow 0.15s ease;
 
   &:hover {
-    box-shadow: 0 0 0 1px var(--border-strong) inset !important;
+    box-shadow: 0 0 0 1px var(--border-strong) inset;
   }
 
   &.is-focus,
   &:focus-within {
     box-shadow: 0 0 0 1px var(--primary-color) inset,
-      0 0 0 3px var(--primary-glow) !important;
+      0 0 0 3px var(--primary-glow);
   }
 }
 
@@ -314,5 +317,34 @@ html, body, #app {
   .logout-curtain {
     transition: none;
     &__bar span { animation: none; }
+  }
+}
+
+
+/* ── 可访问性基线（UI/UX Pro Max 交付检查项）─────────────────────────── */
+
+/* 键盘焦点必须可见：鼠标点击不出现，Tab 导航时出现 */
+:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+.el-button:focus-visible,
+.el-link:focus-visible,
+.el-checkbox__input:focus-visible + .el-checkbox__inner,
+.el-radio__input:focus-visible + .el-radio__inner {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* 动效降级：系统开启"减少动态效果"时，动画与过渡一律压缩到近乎瞬时 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

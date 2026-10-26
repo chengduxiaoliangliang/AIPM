@@ -80,11 +80,12 @@ html.dark {
     color: var(--text-main);
   }
 
+  /* html.dark 前缀已经比 element-plus 的规则高一级，无需 !important */
   .el-input__wrapper,
   .el-select__wrapper,
   .el-textarea__inner {
-    background-color: var(--bg-subtle) !important;
-    box-shadow: 0 0 0 1px var(--border-color) inset !important;
+    background-color: var(--bg-subtle);
+    box-shadow: 0 0 0 1px var(--border-color) inset;
   }
 
   /* 进度条轨道在暗色下会沿用浅色，需要显式覆盖 */
