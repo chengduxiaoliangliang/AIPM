@@ -1,16 +1,31 @@
 <template>
   <div v-if="visible" class="slider-captcha-overlay" @click.self="handleClose">
-    <div class="slider-captcha-box vben-card" :class="{ 'is-shaking': isFailed }">
+    <div
+      class="slider-captcha-box"
+      :class="{ 'is-shaking': isFailed }"
+      role="dialog"
+      aria-modal="true"
+      aria-label="安全人机验证"
+    >
       <!-- Modal Header -->
       <div class="captcha-header flex-between">
-        <span class="captcha-title">安全人机验证</span>
+        <div class="captcha-title-wrap">
+          <el-icon class="title-icon"><Lock /></el-icon>
+          <span class="captcha-title">安全人机验证</span>
+        </div>
         <div class="captcha-actions flex-center">
-          <el-icon class="action-icon" :class="{ 'is-spinning': loading }" @click="fetchCaptcha">
-            <Refresh />
-          </el-icon>
-          <el-icon class="action-icon" @click="handleClose">
-            <Close />
-          </el-icon>
+          <button
+            type="button"
+            class="action-btn"
+            aria-label="换一张"
+            :disabled="loading"
+            @click="fetchCaptcha"
+          >
+            <el-icon :class="{ 'is-spinning': loading }"><Refresh /></el-icon>
+          </button>
+          <button type="button" class="action-btn" aria-label="关闭验证" @click="handleClose">
+            <el-icon><Close /></el-icon>
+          </button>
         </div>
       </div>
 
@@ -76,9 +91,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onUnmounted } from 'vue'
+import { ref, reactive, watch, onMounted, onUnmounted } from 'vue'
 import { getSliderCaptchaApi, verifySliderCaptchaApi, type SliderCaptchaData } from '@/api/auth'
-import { Refresh, Close, DArrowRight, Check } from '@element-plus/icons-vue'
+import { Refresh, Close, DArrowRight, Check, Lock } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   visible: boolean
@@ -210,7 +225,15 @@ function handleClose() {
   emit('close')
 }
 
+/** Esc 关闭：对话框的基本预期 */
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && props.visible) handleClose()
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+
 onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('mousemove', onDragging)
   window.removeEventListener('mouseup', endDrag)
   window.removeEventListener('touchmove', onDragging)
@@ -219,30 +242,34 @@ onUnmounted(() => {
 </script>
 
 <style scoped lang="scss">
+/* 与登录页同一套深色语言：发丝线、无玻璃、强调色只给手柄 */
+$surface: #0b111b;
+$line: rgba(255, 255, 255, 0.09);
+$line-strong: rgba(255, 255, 255, 0.16);
+$text: #e9edf4;
+$muted: #8b96a6;
+$faint: #5d6879;
+$accent: #4d6bfe;
+
 .slider-captcha-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  inset: 0;
+  background: rgba(4, 7, 12, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2000;
-  animation: fadeIn 0.2s ease-out;
+  animation: fadeIn 0.18s ease-out;
 
   .slider-captcha-box {
-    width: 360px;
-    background: rgba(255, 255, 255, 0.88);
-    backdrop-filter: blur(24px) saturate(200%);
-    -webkit-backdrop-filter: blur(24px) saturate(200%);
-    border: 1px solid rgba(255, 255, 255, 0.7);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
-    padding: 18px 20px;
+    width: 376px;
+    background: $surface;
+    border: 1px solid $line;
+    border-radius: 12px;
+    box-shadow: 0 32px 64px -24px rgba(0, 0, 0, 0.9);
+    padding: 16px 18px 18px;
     user-select: none;
 
     &.is-shaking {
@@ -250,30 +277,60 @@ onUnmounted(() => {
     }
 
     .captcha-header {
-      margin-bottom: 12px;
+      margin-bottom: 14px;
+
+      .captcha-title-wrap {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .title-icon {
+        font-size: 13px;
+        color: $faint;
+      }
 
       .captcha-title {
-        font-size: 15px;
-        font-weight: 700;
-        color: var(--text-main);
-        letter-spacing: -0.3px;
+        font-size: 13px;
+        font-weight: 600;
+        color: $text;
+        letter-spacing: -0.01em;
       }
 
       .captcha-actions {
-        gap: 10px;
+        gap: 2px;
 
-        .action-icon {
-          font-size: 16px;
-          color: var(--text-muted);
+        .action-btn {
+          width: 26px;
+          height: 26px;
+          padding: 0;
+          border: none;
+          border-radius: 6px;
+          background: transparent;
+          color: $faint;
+          font-size: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           cursor: pointer;
-          transition: all 0.2s ease;
+          transition: background-color 0.16s ease, color 0.16s ease;
 
-          &:hover {
-            color: var(--primary-color);
-            transform: scale(1.15);
+          &:hover:not(:disabled) {
+            background: rgba(255, 255, 255, 0.07);
+            color: $text;
           }
 
-          &.is-spinning {
+          &:focus-visible {
+            outline: 2px solid $accent;
+            outline-offset: 1px;
+          }
+
+          &:disabled {
+            opacity: 0.5;
+            cursor: default;
+          }
+
+          .is-spinning {
             animation: spin 1s linear infinite;
           }
         }
@@ -283,10 +340,17 @@ onUnmounted(() => {
     .captcha-img-wrapper {
       width: 320px;
       height: 160px;
-      border-radius: var(--radius-sm);
+      border-radius: 8px;
       position: relative;
       overflow: hidden;
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+
+      /* v-loading 默认是白色遮罩，深色卡片上会闪一块白 */
+      --el-mask-color: rgba(11, 17, 27, 0.72);
+
+      :deep(.el-loading-spinner .path) {
+        stroke: #4d6bfe;
+      }
 
       .captcha-bg-img {
         width: 100%;
@@ -298,7 +362,7 @@ onUnmounted(() => {
       .captcha-slider-piece {
         position: absolute;
         cursor: pointer;
-        filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
+        filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.55));
         pointer-events: none;
         z-index: 10;
       }
@@ -309,22 +373,21 @@ onUnmounted(() => {
         left: 0;
         right: 0;
         padding: 6px 12px;
-        font-size: 12px;
-        font-weight: 600;
+        font-size: 11.5px;
+        font-weight: 500;
         display: flex;
         align-items: center;
         justify-content: center;
         color: #ffffff;
+        backdrop-filter: blur(6px);
         animation: slideUp 0.2s ease-out;
 
         &.success {
-          background: rgba(16, 185, 129, 0.9);
-          backdrop-filter: blur(4px);
+          background: rgba(31, 157, 99, 0.92);
         }
 
         &.fail {
-          background: rgba(239, 68, 68, 0.9);
-          backdrop-filter: blur(4px);
+          background: rgba(212, 80, 75, 0.92);
         }
       }
     }
@@ -333,9 +396,9 @@ onUnmounted(() => {
       margin-top: 14px;
       width: 320px;
       height: 42px;
-      background: rgba(241, 245, 249, 0.8);
-      border: 1px solid rgba(203, 213, 225, 0.6);
-      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.045);
+      border: 1px solid $line;
+      border-radius: 8px;
       position: relative;
       display: flex;
       align-items: center;
@@ -347,23 +410,23 @@ onUnmounted(() => {
         left: 0;
         top: 0;
         bottom: 0;
-        background: rgba(79, 70, 229, 0.2);
-        border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+        background: rgba(77, 107, 254, 0.28);
+        border-radius: 8px 0 0 8px;
 
         &.success {
-          background: rgba(16, 185, 129, 0.35);
+          background: rgba(53, 192, 122, 0.26);
         }
 
         &.fail {
-          background: rgba(239, 68, 68, 0.35);
+          background: rgba(226, 84, 79, 0.26);
         }
       }
 
       .slider-tip-text {
         font-size: 12px;
-        color: var(--text-muted);
-        font-weight: 600;
-        letter-spacing: 0.5px;
+        color: $faint;
+        font-weight: 500;
+        letter-spacing: 0.02em;
         pointer-events: none;
         transition: opacity 0.2s ease;
       }
@@ -373,25 +436,23 @@ onUnmounted(() => {
         top: 2px;
         width: 46px;
         height: 36px;
-        background: #ffffff;
-        border: 1px solid rgba(203, 213, 225, 0.8);
-        border-radius: var(--radius-xs);
+        background: $accent;
+        border: none;
+        border-radius: 6px;
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: grab;
-        color: var(--text-regular);
+        color: #ffffff;
         font-size: 16px;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-        transition: background-color 0.2s, border-color 0.2s;
+        box-shadow: 0 2px 10px rgba(77, 107, 254, 0.4);
+        transition: background-color 0.16s ease, box-shadow 0.16s ease;
         z-index: 5;
 
         &:hover,
         &.active {
-          background: var(--primary-color);
-          color: #ffffff;
-          border-color: var(--primary-color);
-          box-shadow: 0 4px 12px rgba(79, 70, 229, 0.35);
+          background: #5b78ff;
+          box-shadow: 0 4px 16px rgba(77, 107, 254, 0.55);
         }
 
         &.active {
@@ -399,15 +460,13 @@ onUnmounted(() => {
         }
 
         &.success {
-          background: var(--success-color) !important;
-          color: #ffffff !important;
-          border-color: var(--success-color) !important;
+          background: #35c07a;
+          box-shadow: 0 2px 10px rgba(53, 192, 122, 0.45);
         }
 
         &.fail {
-          background: var(--danger-color) !important;
-          color: #ffffff !important;
-          border-color: var(--danger-color) !important;
+          background: #e2544f;
+          box-shadow: 0 2px 10px rgba(226, 84, 79, 0.45);
         }
       }
     }
