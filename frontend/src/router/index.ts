@@ -187,4 +187,32 @@ const router = createRouter({
   }
 })
 
+// ── 部署后旧页面的自愈 ────────────────────────────────────────────────────────
+// 前端每次发布都会重新生成带 hash 的 chunk 文件名。如果用户停留在发布前打开的
+// 页面里，未访问过的路由 chunk 已经被替换掉，点击菜单时动态导入会失败——
+// 表现就是"点了没反应"。这里捕获这类错误并自动刷新一次拿到新资源。
+const RELOAD_KEY = 'aipm:chunk-reload-at'
+
+function recoverFromStaleChunk() {
+  const last = Number(sessionStorage.getItem(RELOAD_KEY) || 0)
+  // 10 秒内只重载一次，避免真的坏掉时无限刷新
+  if (Date.now() - last > 10000) {
+    sessionStorage.setItem(RELOAD_KEY, String(Date.now()))
+    window.location.reload()
+  }
+}
+
+const CHUNK_ERROR = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i
+
+router.onError((error: unknown) => {
+  const msg = error instanceof Error ? error.message : String(error ?? '')
+  if (CHUNK_ERROR.test(msg)) recoverFromStaleChunk()
+})
+
+// Vite 在预加载失败时会抛这个事件（动态 import 的兜底）
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault()
+  recoverFromStaleChunk()
+})
+
 export default router
